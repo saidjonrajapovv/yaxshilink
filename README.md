@@ -17,7 +17,7 @@ The reverse proxy automatically routes requests to Django using environment vari
 ### 1. Clone the repo
 ```bash
 git clone https://github.com/saidjonrajapovv/yaxshilink.git
-cd yourproject
+cd yaxshilink
 ````
 
 ### 2. Create required directories
@@ -78,8 +78,6 @@ python manage.py migrate
 python manage.py createsuperuser
 ```
 
-Alternatively, you can automate user creation via environment variables (see `.env` section above) using a startup script in your Dockerfile or entrypoint.
-
 ---
 
 ## 🌐 Accessing the App
@@ -88,16 +86,21 @@ Alternatively, you can automate user creation via environment variables (see `.e
 
   * Visit → [http://localhost](http://localhost)
 
+* Django Admin:
+
+  * Visit → [http://localhost/admin](http://localhost/admin)
+  * Login with the superuser credentials
+
+* API Documentation:
+
+  * Swagger UI → [http://localhost/docs/swagger/](http://localhost/docs/swagger/)
+  * Redoc UI → [http://localhost/docs/redoc/](http://localhost/docs/redoc/)
+
 * If using a domain:
 
   * Set `VIRTUAL_HOST=yourdomain.com` in `docker-compose.yml`
   * Add that domain to Django’s `ALLOWED_HOSTS` in `settings.py`
   * Visit → `http://yourdomain.com`
-
-* Django Admin:
-
-  * Visit → [http://localhost/admin](http://localhost/admin)
-  * Login with the superuser credentials you created.
 
 ---
 
@@ -151,8 +154,10 @@ docker network inspect webnet
 
 ## ✅ Summary
 
-* `nginx-proxy` automatically detects Django when `VIRTUAL_HOST` and `VIRTUAL_PORT` are set.
+* Repo: [https://github.com/saidjonrajapovv/yaxshilink.git](https://github.com/saidjonrajapovv/yaxshilink.git)
+* The proxy auto-detects Django when `VIRTUAL_HOST` and `VIRTUAL_PORT` are set.
 * Both `nginx-proxy` and `django-web` must share the `webnet` network.
 * Always run migrations before using Django.
 * Create a superuser to access the admin panel.
-* Verify that proxy logs show configuration generation.
+* Swagger docs → `/docs/swagger/`
+* Redoc docs → `/docs/redoc/`
