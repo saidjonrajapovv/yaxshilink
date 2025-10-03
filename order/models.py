@@ -2,7 +2,7 @@ from django.db import models
 
 
 class Order(models.Model):
-    phone_number = models.CharField(max_length=20)  # 250 emas, real formatga mos
+    phone_number = models.CharField(max_length=20)
     
     def __str__(self):
         return f"Order #{self.id} - {self.phone_number}"
@@ -10,7 +10,7 @@ class Order(models.Model):
 
 class OrderItem(models.Model):
     order = models.ForeignKey(Order, on_delete=models.CASCADE, related_name="items")
-    sku = models.CharField(max_length=100)  # Product SKU (yoki boshqa modelga FK)
-    
+    sku = models.CharField(max_length=100)
+
     def __str__(self):
         return f"{self.sku} (Order #{self.order.id})"

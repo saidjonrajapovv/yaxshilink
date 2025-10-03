@@ -2,13 +2,13 @@ from django.db import models
 
 class Bottle(models.Model):
     MATERIAL_CHOICES = [
-        ('plastic', 'Plastic'),
-        ('aluminium', 'Aluminium'),
+        ('P', 'Plastic'),
+        ('A', 'Aluminium'),
     ]
 
     size = models.FloatField()
     name = models.CharField(max_length=250)
-    image = models.ImageField(upload_to="bottle/images/")
+    image = models.ImageField(upload_to="bottle/images/", null=True, blank=True)
     material = models.CharField(max_length=20, choices=MATERIAL_CHOICES)
     sku = models.CharField(max_length=16)
 
