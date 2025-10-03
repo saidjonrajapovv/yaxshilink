@@ -16,7 +16,7 @@ The reverse proxy automatically routes requests to Django using environment vari
 
 ### 1. Clone the repo
 ```bash
-git clone https://github.com/yourusername/yourproject.git
+git clone https://github.com/saidjonrajapovv/yaxshilink.git
 cd yourproject
 ````
 
