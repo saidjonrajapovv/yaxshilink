@@ -1,0 +1,9 @@
+Django>=4.2
+djangorestframework
+djangorestframework-simplejwt
+channels>=4
+daphne>=4
+Pillow
+channels-redis
+psycopg2-binary
+drf-spectacular

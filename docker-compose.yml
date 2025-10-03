@@ -1,0 +1,52 @@
+services:
+  web:
+    build: .
+    container_name: django-web
+    command: daphne -b 0.0.0.0 -p 8000 config.asgi:application
+    env_file: .env
+    environment:
+      - VIRTUAL_HOST=localhost
+      - VIRTUAL_PORT=8000
+    volumes:
+      - .:/app
+    depends_on:
+      redis:
+        condition: service_healthy
+    networks:
+      - webnet
+    restart: unless-stopped
+    expose:
+      - "8000"
+
+  redis:
+    image: redis:7
+    container_name: redis
+    ports:
+      - "6379:6379"
+    networks:
+      - webnet
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  nginx-proxy:
+    image: jwilder/nginx-proxy:alpine
+    container_name: nginx-proxy
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./certs:/etc/nginx/certs:rw
+      - ./vhost.d:/etc/nginx/vhost.d
+      - ./html:/usr/share/nginx/html
+      - /var/run/docker.sock:/tmp/docker.sock:ro
+    networks:
+      - webnet
+    restart: unless-stopped
+
+networks:
+  webnet:
+    driver: bridge
