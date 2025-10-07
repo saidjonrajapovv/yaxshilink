@@ -1,31 +1,29 @@
 import asyncio
-import websockets
 import json
 import aiohttp
-import logging
-import pyperclip
 import serial_asyncio
-from datetime import datetime
+import websockets
+import logging
 from pathlib import Path
 
-DEVICE_ID = "ec575e49-e579-4e1c-a819-33c242919aae"
-BASE_URL = "http://127.0.0.1:8000/api/"
+# ------------------ CONFIG ------------------
+DEVICE_NUMBER = "0f00b3d8-f6e2-4e0d-8a7b-61e0838c8f6f"
+API_CHECK_URL = "http://127.0.0.1:8000/api/bottle/check/"
+SESSION_ITEM_URL = "http://127.0.0.1:8000/api/session/{session_id}/items/"
+WS_URL = f"ws://127.0.0.1:8000/ws/device/{DEVICE_NUMBER}/"
 
-API_CHECK_URL = BASE_URL + "bottle/check/"
-SESSION_ITEM_URL = BASE_URL + "session/{session_id}/items/"
-WS_URL = "ws://127.0.0.1:8000/ws/device/" + DEVICE_ID + "/"
-SERIAL_PORT = "/dev/ttyACM0"
-# SERIAL_PORT = "/dev/tty.usbmodemXXXX"
+SERIAL_PORT = "/dev/ttyUSB0"
 BAUDRATE = 9600
 
+# ------------------ GLOBAL STATE ------------------
 session_active = False
 session_id = None
 serial_writer = None
 loggers = {}
 
+# ------------------ LOGGING ------------------
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
-
 
 def get_logger(session_id: int = None) -> logging.Logger:
     global loggers
@@ -47,42 +45,26 @@ def get_logger(session_id: int = None) -> logging.Logger:
     loggers[name] = logger
     return logger
 
+# ------------------ SERIAL ------------------
+async def init_serial():
+    """Initialize serial connection with Arduino."""
+    global serial_writer
+    reader, writer = await serial_asyncio.open_serial_connection(url=SERIAL_PORT, baudrate=BAUDRATE)
+    serial_writer = writer
+    print(f"🔌 Connected to Arduino on {SERIAL_PORT}")
+    return reader, writer
 
-class SerialHandler(asyncio.Protocol):
-    def connection_made(self, transport):
-        global serial_writer
-        serial_writer = transport
-        print(f"🔌 Connected to Arduino on {SERIAL_PORT}")
-        get_logger().info("Connected to Arduino.")
-
-    def data_received(self, data):
-        global session_active
-        text = data.decode("utf-8", errors="ignore").strip()
-        for ch in text:
-            if ch == "E":
-                print("🛑 Arduino sent 'E' (end signal).")
-                if session_active:
-                    session_active = False
-                    print("🔴 Session stopped (by Arduino).")
-                    get_logger(session_id).info("Session stopped by Arduino.")
-            else:
-                print(f"🔹 Arduino → {ch}")
-
-    def connection_lost(self, exc):
-        print("❌ Serial connection lost.")
-        get_logger().error("Serial connection lost.")
-
-
-async def send_serial(cmd: str):
-    """Send a single-character command to Arduino."""
+async def send_to_arduino(cmd: str):
+    """Send single character command to Arduino."""
     global serial_writer
     if serial_writer:
         serial_writer.write((cmd + "\n").encode("utf-8"))
-        print(f"➡️ Sent to Arduino: '{cmd}'")
+        await serial_writer.drain()
+        print(f"⬆️ Sent to Arduino: {cmd}")
     else:
-        print("⚠️ Serial not ready — cannot send command.")
+        print("⚠️ Arduino not connected")
 
-
+# ------------------ API ------------------
 async def send_sku_to_api(sku: str):
     global session_id
     logger = get_logger(session_id)
@@ -94,10 +76,10 @@ async def send_sku_to_api(sku: str):
                 data = await response.json()
 
                 if data.get("exists") is False:
-                    msg = f"🚫 {sku} → Not found (Material: {data.get('material')})"
+                    msg = f"🚫 {sku} → Not found"
                     print(msg)
                     logger.warning(msg)
-                    await send_serial("R")
+                    await send_to_arduino("R")
                     return
 
                 if data.get("exists") is True:
@@ -107,11 +89,7 @@ async def send_sku_to_api(sku: str):
                     print(msg)
                     logger.info(msg)
 
-                    if material == "P":
-                        await send_serial("P")
-                    elif material == "A":
-                        await send_serial("A")
-
+                    # Send to active session
                     if session_id:
                         post_url = SESSION_ITEM_URL.format(session_id=session_id)
                         async with session.post(post_url, json={"sku": sku}) as post_resp:
@@ -119,9 +97,18 @@ async def send_sku_to_api(sku: str):
                                 success_msg = f"📦 {sku} added to session."
                                 print(success_msg)
                                 logger.info(success_msg)
+
+                                # Send material command to Arduino
+                                if material.lower() == "plastic":
+                                    await send_to_arduino("P")
+                                elif material.lower() == "aluminum":
+                                    await send_to_arduino("A")
+                                else:
+                                    await send_to_arduino("R")
+
                             else:
                                 err = await post_resp.text()
-                                fail_msg = f"⚠️ Session post failed: {post_resp.status} → {err}"
+                                fail_msg = f"⚠️ Failed to send to session: {post_resp.status} → {err}"
                                 logger.error(fail_msg)
                     else:
                         logger.warning(f"No session ID — SKU '{sku}' not sent.")
@@ -129,7 +116,7 @@ async def send_sku_to_api(sku: str):
         except Exception as e:
             logger.exception(f"Unexpected error: {e}")
 
-
+# ------------------ WEBSOCKET ------------------
 async def websocket_listener():
     global session_active, session_id
     system_logger = get_logger()
@@ -155,72 +142,77 @@ async def websocket_listener():
                     if status == "active":
                         session_active = True
                         print(f"\n🟢 Session #{session_id} started.")
-                        await send_serial("S")
                         session_logger.info(f"Session #{session_id} started.")
+                        await send_to_arduino("S")  # start
                     else:
                         session_active = False
-                        print(f"\n🔴 Session #{session_id} inactive.")
-                        session_logger.info(f"Session #{session_id} inactive.")
+                        print(f"\n🔴 Session #{session_id} is blocked.")
+                        session_logger.info(f"Session #{session_id} is blocked.")
+                        await send_to_arduino("E")  # idle
 
                 elif event == "session_stopped":
                     stopped_id = data.get("session_id")
                     if stopped_id == session_id:
                         session_active = False
-                        await send_serial("E")
                         session_logger = get_logger(session_id)
                         print(f"\n🛑 Session #{stopped_id} stopped.")
                         session_logger.info(f"Session #{stopped_id} stopped.")
+                        await send_to_arduino("E")  # idle
 
     except Exception as e:
         system_logger.error(f"WebSocket error: {e}")
         print("❌ WebSocket connection lost.")
 
-
-async def clipboard_listener():
+async def serial_listener(reader):
+    """Listens to Arduino messages (e.g. 'E' for end)."""
     global session_active
     logger = get_logger()
-    last_text = ""
-    last_time = datetime.now()
-    logger.info("Clipboard listener started.")
-    print("\n📋 Clipboard listener active.\n")
 
     while True:
         try:
-            text = pyperclip.paste().strip()
-            if text:
-                now = datetime.now()
-                if text != last_text or (now - last_time).total_seconds() > 0.1:
-                    last_text = text
-                    last_time = now
+            line = await reader.readline()
+            if not line:
+                continue
+            msg = line.decode(errors="ignore").strip()
+            if not msg:
+                continue
 
-                    if session_active:
-                        print(f"📥 {text}")
-                        await send_sku_to_api(text)
-                    else:
-                        logger.warning(f"Session inactive — '{text}' not sent.")
-
-                    pyperclip.copy('')
-
+            print(f"⬇️ Arduino says: {msg}")
+            if msg == "E":
+                logger.info("Arduino → E (button pressed)")
+                if session_active:
+                    session_active = False
+                    print("🛑 Session ended by Arduino (button).")
+                    # Optionally: notify backend here via API or WS
         except Exception as e:
-            logger.error(f"Clipboard error: {e}")
+            logger.error(f"Serial read error: {e}")
+            await asyncio.sleep(1)
 
-        await asyncio.sleep(0.1)
+async def input_listener():
+    """Handles barcode scanner or manual input."""
+    global session_active
+    logger = get_logger()
+    print("\n⌨️ Scanner active — scan or type SKU:\n")
 
+    loop = asyncio.get_event_loop()
+    while True:
+        sku = await loop.run_in_executor(None, input, "> ")
+        sku = sku.strip()
+        if not sku:
+            continue
+        if session_active:
+            await send_sku_to_api(sku)
+        else:
+            print("⚠️ No active session — cannot send SKU.")
+            logger.warning(f"Session inactive — '{sku}' ignored.")
 
 async def main():
-    loop = asyncio.get_running_loop()
-
-    transport, protocol = await serial_asyncio.create_serial_connection(
-        asyncio.get_running_loop,
-        lambda: SerialHandler(),
-        SERIAL_PORT,
-        BAUDRATE
+    reader, _ = await init_serial()
+    await asyncio.gather(
+        websocket_listener(),
+        serial_listener(reader),
+        input_listener()
     )
-
-    listener_task = asyncio.create_task(websocket_listener())
-    clipboard_task = asyncio.create_task(clipboard_listener())
-    await asyncio.gather(listener_task, clipboard_task)
-
 
 if __name__ == "__main__":
     try:
