@@ -92,31 +92,43 @@ async def serial_listener(reader):
             logger.error(f"Serial read error: {e}")
             await asyncio.sleep(1)
 
-# ------------------ SCANNER ------------------
+
 async def scanner_listener(scanner_reader):
     """Continuously listens to barcode scanner and prints data."""
     global session_active
     logger = get_logger()
-    print("\n📸 Scanner active — waiting for barcodes...\n")
+    print(f"\n📸 Scanner active on {SCANNER_PORT} — waiting for barcodes...\n")
+
+    # Test message to verify function is running
+    print("🔧 Scanner listener started successfully")
 
     while True:
         try:
             line = await scanner_reader.readline()
             if not line:
-                continue
-            sku = line.decode(errors="ignore").strip()
-            if not sku:
+                print("⚠️ Scanner: Empty line received")
                 continue
 
-            print(f"🔍 Scanner read: {sku}")
+            # Print raw bytes for debugging
+            print(f"🔧 Scanner raw bytes: {line}")
+
+            sku = line.decode(errors="ignore").strip()
+            if not sku:
+                print("⚠️ Scanner: Empty SKU after decoding")
+                continue
+
+            print(f"🔍 Scanner read: '{sku}'")
             if session_active:
                 await send_sku_to_api(sku)
             else:
                 print("⚠️ No active session — cannot send SKU.")
                 logger.warning(f"Session inactive — '{sku}' ignored.")
+
         except Exception as e:
+            print(f"❌ Scanner error: {e}")
             logger.error(f"Scanner read error: {e}")
             await asyncio.sleep(1)
+
 
 # ------------------ API ------------------
 async def send_sku_to_api(sku: str):
