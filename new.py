@@ -87,11 +87,11 @@ async def send_sku_to_api(sku: str):
 
                 if data.get("exists") is True:
                     bottle = data.get("bottle", {})
+                    material = bottle.get("material")
                     msg = f"✅ {sku} → {bottle.get('name')} ({material})"
                     print(msg)
                     logger.info(msg)
 
-                    material = bottle.get("material")
 
                     if material == "P":
                         await send_to_arduino("P")
