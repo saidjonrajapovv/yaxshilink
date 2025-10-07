@@ -87,12 +87,19 @@ async def send_sku_to_api(sku: str):
 
                 if data.get("exists") is True:
                     bottle = data.get("bottle", {})
-                    material = bottle.get("material")
                     msg = f"✅ {sku} → {bottle.get('name')} ({material})"
                     print(msg)
                     logger.info(msg)
 
-                    # Send to active session
+                    material = bottle.get("material")
+
+                    if material == "P":
+                        await send_to_arduino("P")
+                    elif material == "A":
+                        await send_to_arduino("A")
+                    else:
+                        await send_to_arduino("R")
+
                     if session_id:
                         post_url = SESSION_ITEM_URL.format(session_id=session_id)
                         async with session.post(post_url, json={"sku": sku}) as post_resp:
@@ -100,15 +107,6 @@ async def send_sku_to_api(sku: str):
                                 success_msg = f"📦 {sku} added to session."
                                 print(success_msg)
                                 logger.info(success_msg)
-
-                                # Send material command to Arduino
-                                if material.lower() == "plastic":
-                                    await send_to_arduino("P")
-                                elif material.lower() == "aluminum":
-                                    await send_to_arduino("A")
-                                else:
-                                    await send_to_arduino("R")
-
                             else:
                                 err = await post_resp.text()
                                 fail_msg = f"⚠️ Failed to send to session: {post_resp.status} → {err}"
