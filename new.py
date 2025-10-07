@@ -18,86 +18,86 @@ ARDUINO_PORT = "/dev/ttyUSB0"
 SCANNER_PORT = "/dev/ttyACM0"
 BAUDRATE = 9600
 
+LOG_DIR = Path("logs")
+LOG_DIR.mkdir(exist_ok=True)
+
+# ------------------ STATE ------------------
 session_active = False
 session_id = None
 serial_writer = None
 loggers = {}
 
-LOG_DIR = Path("logs")
-LOG_DIR.mkdir(exist_ok=True)
-
 # ------------------ LOGGING ------------------
 def get_logger(session_id: int = None) -> logging.Logger:
-    global loggers
-    if not session_id:
-        name = "system"
-        log_file = LOG_DIR / "system.log"
-    else:
-        name = f"session_{session_id}"
-        log_file = LOG_DIR / f"session_{session_id}.log"
+    """Create or get a logger instance for system or session."""
+    name = f"session_{session_id}" if session_id else "system"
+    log_file = LOG_DIR / f"{name}.log"
 
-    if name in loggers:
-        return loggers[name]
+    if name not in loggers:
+        logger = logging.getLogger(name)
+        logger.setLevel(logging.INFO)
+        handler = logging.FileHandler(log_file, encoding="utf-8")
+        handler.setFormatter(logging.Formatter("%(asctime)s — %(levelname)s — %(message)s"))
+        logger.addHandler(handler)
+        loggers[name] = logger
 
-    logger = logging.getLogger(name)
-    logger.setLevel(logging.INFO)
-    fh = logging.FileHandler(log_file, encoding="utf-8")
-    fh.setFormatter(logging.Formatter("%(asctime)s — %(levelname)s — %(message)s"))
-    logger.addHandler(fh)
-    loggers[name] = logger
-    return logger
+    return loggers[name]
 
-# ------------------ SERIAL INIT ------------------
+# ------------------ SERIAL CONNECTIONS ------------------
 async def init_arduino():
+    """Initialize Arduino serial connection."""
     reader, writer = await serial_asyncio.open_serial_connection(url=ARDUINO_PORT, baudrate=BAUDRATE)
     print(f"🔌 Connected to Arduino on {ARDUINO_PORT}")
     return reader, writer
 
 async def init_scanner():
+    """Initialize Scanner serial connection."""
     reader, _ = await serial_asyncio.open_serial_connection(url=SCANNER_PORT, baudrate=BAUDRATE)
     print(f"📡 Connected to Scanner on {SCANNER_PORT}")
+    print("📸 Scanner active — waiting for barcodes...")
     return reader
 
-# ------------------ ARDUINO ------------------
+# ------------------ ARDUINO HANDLERS ------------------
 async def send_to_arduino(cmd: str):
-    global serial_writer
-    if serial_writer:
-        serial_writer.write((cmd + "\n").encode("utf-8"))
+    """Send a command to Arduino."""
+    if not serial_writer:
+        print("⚠️ Arduino not connected")
+        return
+
+    try:
+        serial_writer.write(f"{cmd}\n".encode())
         await serial_writer.drain()
         print(f"⬆️ Sent to Arduino: {cmd}")
-    else:
-        print("⚠️ Arduino not connected")
+    except Exception as e:
+        print(f"❌ Arduino write error: {e}")
 
 async def serial_listener(reader):
-    """Listens to Arduino messages."""
+    """Listen for messages from Arduino."""
     global session_active
     logger = get_logger()
 
     while True:
         try:
             line = await reader.readline()
-            if not line:
-                continue
             msg = line.decode(errors="ignore").strip()
             if not msg:
                 continue
 
             print(f"⬇️ Arduino says: {msg}")
-            if msg == "E":
-                logger.info("Arduino → E (button pressed)")
-                if session_active:
-                    session_active = False
-                    print("🛑 Session ended by Arduino.")
+            if msg == "E" and session_active:
+                session_active = False
+                print("🛑 Session ended by Arduino.")
+                logger.info("Arduino ended session.")
         except Exception as e:
             logger.error(f"Serial read error: {e}")
             await asyncio.sleep(1)
 
-
-# python
-async def scanner_listener_alternative(scanner_reader):
-    print(f"\n📸 Alternative scanner listener started on {SCANNER_PORT}")
-
+# ------------------ SCANNER HANDLER ------------------
+async def scanner_listener(scanner_reader):
+    """Read barcodes from scanner, process and send to API."""
+    print(f"\n📡 Listening for scanner data on {SCANNER_PORT}")
     buffer = bytearray()
+
     while True:
         try:
             chunk = await scanner_reader.read(128)
@@ -105,127 +105,102 @@ async def scanner_listener_alternative(scanner_reader):
                 await asyncio.sleep(0.01)
                 continue
 
-            print(f"🔧 Raw data received: {chunk}")
             buffer.extend(chunk)
-
-            # Extract complete lines terminated by \r, \n or \r\n
-            while True:
-                idx_r = buffer.find(b"\r")
-                idx_n = buffer.find(b"\n")
-                candidates = [i for i in (idx_r, idx_n) if i != -1]
-                if not candidates:
-                    break
-
-                idx = min(candidates)
-                line = bytes(buffer[:idx])
-
-                # Drop the delimiter we found
-                del buffer[:idx + 1]
-                # If it was \r\n, drop the second delimiter too
-                if buffer[:1] == b"\n":
+            # Split on newline or carriage return
+            while (idx := next((i for i, b in enumerate(buffer) if b in (10, 13)), -1)) != -1:
+                line = buffer[:idx].decode(errors="ignore").strip()
+                del buffer[: idx + 1]
+                if buffer[:1] in (b"\n", b"\r"):
                     del buffer[:1]
-
-                sku = line.decode("utf-8", errors="ignore").strip()
-                if sku:
-                    print(f"🔍 Scanner read: '{sku}'")
+                if line:
+                    print(f"🔍 Scanner read: {line}")
                     if session_active:
-                        await send_sku_to_api(sku)
-
+                        await send_sku_to_api(line)
         except Exception as e:
             print(f"❌ Scanner error: {e}")
             await asyncio.sleep(0.1)
 
-
-# ------------------ API ------------------
+# ------------------ API HANDLERS ------------------
 async def send_sku_to_api(sku: str):
+    """Validate SKU with API and forward to Arduino + backend session."""
     global session_id
     logger = get_logger(session_id)
 
     async with aiohttp.ClientSession() as session:
         try:
-            payload = {"sku": sku}
-            async with session.post(API_CHECK_URL, json=payload) as response:
-                data = await response.json()
+            async with session.post(API_CHECK_URL, json={"sku": sku}) as resp:
+                data = await resp.json()
 
-                if data.get("exists") is False:
-                    msg = f"🚫 {sku} → Not found"
-                    print(msg)
-                    logger.warning(msg)
-                    await send_to_arduino("R")
-                    return
+            if not data.get("exists"):
+                msg = f"🚫 {sku} → Not found"
+                print(msg)
+                logger.warning(msg)
+                await send_to_arduino("R")
+                return
 
-                if data.get("exists") is True:
-                    bottle = data.get("bottle", {})
-                    material = bottle.get("material")
-                    msg = f"✅ {sku} → {bottle.get('name')} ({material})"
-                    print(msg)
-                    logger.info(msg)
+            bottle = data.get("bottle", {})
+            material = bottle.get("material")
+            name = bottle.get("name", "Unknown")
 
-                    if material == "P":
-                        await send_to_arduino("P")
-                    elif material == "A":
-                        await send_to_arduino("A")
+            msg = f"✅ {sku} → {name} ({material})"
+            print(msg)
+            logger.info(msg)
+
+            # Send command to Arduino
+            await send_to_arduino(material if material in ("P", "A") else "R")
+
+            # Add to active session
+            if session_id:
+                post_url = SESSION_ITEM_URL.format(session_id=session_id)
+                async with session.post(post_url, json={"sku": sku}) as post_resp:
+                    if post_resp.status in (200, 201):
+                        print(f"📦 {sku} added to session.")
+                        logger.info(f"{sku} added to session.")
                     else:
-                        await send_to_arduino("R")
-
-                    if session_id:
-                        post_url = SESSION_ITEM_URL.format(session_id=session_id)
-                        async with session.post(post_url, json={"sku": sku}) as post_resp:
-                            if post_resp.status in (200, 201):
-                                print(f"📦 {sku} added to session.")
-                                logger.info(f"📦 {sku} added to session.")
-                            else:
-                                err = await post_resp.text()
-                                logger.error(f"⚠️ Failed to send to session: {post_resp.status} → {err}")
-                    else:
-                        logger.warning(f"No session ID — SKU '{sku}' not sent.")
+                        err = await post_resp.text()
+                        logger.error(f"⚠️ Failed to send to session: {post_resp.status} → {err}")
         except Exception as e:
-            logger.exception(f"Unexpected error: {e}")
+            logger.exception(f"API error: {e}")
 
-# ------------------ WEBSOCKET ------------------
+# ------------------ WEBSOCKET HANDLER ------------------
 async def websocket_listener():
+    """Handle WebSocket events for session management."""
     global session_active, session_id
-    system_logger = get_logger()
+    sys_logger = get_logger()
+
     print(f"\n🔗 WebSocket: {WS_URL}")
-
     try:
-        async with websockets.connect(WS_URL) as websocket:
+        async with websockets.connect(WS_URL) as ws:
             print("✅ WebSocket connected. Waiting for messages...\n")
-            system_logger.info("WebSocket connected.")
+            sys_logger.info("WebSocket connected.")
 
-            while True:
-                message = await websocket.recv()
-                msg = json.loads(message)
-                event = msg.get("event")
-                data = msg.get("data", {})
+            async for msg in ws:
+                data = json.loads(msg)
+                event = data.get("event")
+                payload = data.get("data", {})
 
                 if event == "session_created":
-                    session_id = data.get("session_id")
-                    status = data.get("status")
-                    session_logger = get_logger(session_id)
+                    session_id = payload.get("session_id")
+                    active = payload.get("status") == "active"
+                    logger = get_logger(session_id)
+                    session_active = active
 
-                    if status == "active":
-                        session_active = True
-                        print(f"\n🟢 Session #{session_id} started.")
-                        session_logger.info(f"Session #{session_id} started.")
-                        await send_to_arduino("S")
-                    else:
-                        session_active = False
-                        print(f"\n🔴 Session #{session_id} is blocked.")
-                        session_logger.info(f"Session #{session_id} is blocked.")
-                        await send_to_arduino("E")
+                    state = "started" if active else "blocked"
+                    print(f"\n🟢 Session #{session_id} {state}.")
+                    logger.info(f"Session #{session_id} {state}.")
+                    await send_to_arduino("S" if active else "E")
 
-                elif event == "session_stopped":
-                    stopped_id = data.get("session_id")
-                    if stopped_id == session_id:
-                        session_active = False
-                        print(f"\n🛑 Session #{stopped_id} stopped.")
-                        system_logger.info(f"Session #{stopped_id} stopped.")
-                        await send_to_arduino("E")
+                elif event == "session_stopped" and payload.get("session_id") == session_id:
+                    session_active = False
+                    print(f"\n🛑 Session #{session_id} stopped.")
+                    sys_logger.info(f"Session #{session_id} stopped.")
+                    await send_to_arduino("E")
 
     except Exception as e:
-        system_logger.error(f"WebSocket error: {e}")
-        print("❌ WebSocket connection lost.")
+        sys_logger.error(f"WebSocket error: {e}")
+        print("❌ WebSocket connection lost. Retrying in 3s...")
+        await asyncio.sleep(3)
+        asyncio.create_task(websocket_listener())
 
 # ------------------ MAIN ------------------
 async def main():
@@ -236,8 +211,7 @@ async def main():
     await asyncio.gather(
         websocket_listener(),
         serial_listener(arduino_reader),
-        scanner_listener_alternative(scanner_reader)  # Use alternative version
-
+        scanner_listener(scanner_reader)
     )
 
 if __name__ == "__main__":
