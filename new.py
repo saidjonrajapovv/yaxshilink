@@ -93,6 +93,33 @@ async def serial_listener(reader):
             await asyncio.sleep(1)
 
 
+async def scanner_listener_alternative(scanner_reader):
+    print(f"\n📸 Alternative scanner listener started on {SCANNER_PORT}")
+
+    buffer = b''
+    while True:
+        try:
+            data = await scanner_reader.read(100)  # Read up to 100 bytes
+            if data:
+                print(f"🔧 Raw data received: {data}")
+                buffer += data
+
+                # Check if we have a complete barcode (usually ends with \r or \n)
+                if b'\r' in buffer or b'\n' in buffer:
+                    lines = buffer.split(b'\r\n') or buffer.split(b'\n')
+                    for line in lines[:-1]:  # Process complete lines
+                        if line:
+                            sku = line.decode('utf-8', errors='ignore').strip()
+                            print(f"🔍 Scanner read: '{sku}'")
+                            if session_active:
+                                await send_sku_to_api(sku)
+                    buffer = lines[-1]  # Keep incomplete line in buffer
+
+        except Exception as e:
+            print(f"❌ Scanner error: {e}")
+            await asyncio.sleep(0.1)
+
+
 async def scanner_listener(scanner_reader):
     """Continuously listens to barcode scanner and prints data."""
     global session_active
@@ -230,7 +257,9 @@ async def main():
     await asyncio.gather(
         websocket_listener(),
         serial_listener(arduino_reader),
-        scanner_listener(scanner_reader)
+        # scanner_listener(scanner_reader)
+        scanner_listener_alternative(scanner_reader)  # Use alternative version
+
     )
 
 if __name__ == "__main__":
