@@ -6,24 +6,24 @@ import websockets
 import logging
 from pathlib import Path
 
-# ------------------ CONFIG ------------------
+BASE_IP = "10.10.3.49:8000"
+
 DEVICE_NUMBER = "0f00b3d8-f6e2-4e0d-8a7b-61e0838c8f6f"
-API_CHECK_URL = "http://127.0.0.1:8000/api/bottle/check/"
-SESSION_ITEM_URL = "http://127.0.0.1:8000/api/session/{session_id}/items/"
-WS_URL = f"ws://127.0.0.1:8000/ws/device/{DEVICE_NUMBER}/"
+API_CHECK_URL = f"http://{BASE_IP}/api/bottle/check/"
+SESSION_ITEM_URL = "http://"+BASE_IP + "/api/session/{session_id}/items/"
+WS_URL = f"ws://{BASE_IP}/ws/device/{DEVICE_NUMBER}/"
 
 SERIAL_PORT = "/dev/ttyUSB0"
 BAUDRATE = 9600
 
-# ------------------ GLOBAL STATE ------------------
 session_active = False
 session_id = None
 serial_writer = None
 loggers = {}
 
-# ------------------ LOGGING ------------------
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
+
 
 def get_logger(session_id: int = None) -> logging.Logger:
     global loggers
@@ -45,6 +45,7 @@ def get_logger(session_id: int = None) -> logging.Logger:
     loggers[name] = logger
     return logger
 
+
 # ------------------ SERIAL ------------------
 async def init_serial():
     """Initialize serial connection with Arduino."""
@@ -53,6 +54,7 @@ async def init_serial():
     serial_writer = writer
     print(f"🔌 Connected to Arduino on {SERIAL_PORT}")
     return reader, writer
+
 
 async def send_to_arduino(cmd: str):
     """Send single character command to Arduino."""
@@ -63,6 +65,7 @@ async def send_to_arduino(cmd: str):
         print(f"⬆️ Sent to Arduino: {cmd}")
     else:
         print("⚠️ Arduino not connected")
+
 
 # ------------------ API ------------------
 async def send_sku_to_api(sku: str):
@@ -116,6 +119,7 @@ async def send_sku_to_api(sku: str):
         except Exception as e:
             logger.exception(f"Unexpected error: {e}")
 
+
 # ------------------ WEBSOCKET ------------------
 async def websocket_listener():
     global session_active, session_id
@@ -163,6 +167,7 @@ async def websocket_listener():
         system_logger.error(f"WebSocket error: {e}")
         print("❌ WebSocket connection lost.")
 
+
 async def serial_listener(reader):
     """Listens to Arduino messages (e.g. 'E' for end)."""
     global session_active
@@ -188,6 +193,7 @@ async def serial_listener(reader):
             logger.error(f"Serial read error: {e}")
             await asyncio.sleep(1)
 
+
 async def input_listener():
     """Handles barcode scanner or manual input."""
     global session_active
@@ -206,6 +212,7 @@ async def input_listener():
             print("⚠️ No active session — cannot send SKU.")
             logger.warning(f"Session inactive — '{sku}' ignored.")
 
+
 async def main():
     reader, _ = await init_serial()
     await asyncio.gather(
@@ -213,6 +220,7 @@ async def main():
         serial_listener(reader),
         input_listener()
     )
+
 
 if __name__ == "__main__":
     try:
