@@ -93,68 +93,47 @@ async def serial_listener(reader):
             await asyncio.sleep(1)
 
 
+# python
 async def scanner_listener_alternative(scanner_reader):
     print(f"\n📸 Alternative scanner listener started on {SCANNER_PORT}")
 
-    buffer = b''
+    buffer = bytearray()
     while True:
         try:
-            data = await scanner_reader.read(100)  # Read up to 100 bytes
-            if data:
-                print(f"🔧 Raw data received: {data}")
-                buffer += data
+            chunk = await scanner_reader.read(128)
+            if not chunk:
+                await asyncio.sleep(0.01)
+                continue
 
-                # Check if we have a complete barcode (usually ends with \r or \n)
-                if b'\r' in buffer or b'\n' in buffer:
-                    lines = buffer.split(b'\r\n') or buffer.split(b'\n')
-                    for line in lines[:-1]:  # Process complete lines
-                        if line:
-                            sku = line.decode('utf-8', errors='ignore').strip()
-                            print(f"🔍 Scanner read: '{sku}'")
-                            if session_active:
-                                await send_sku_to_api(sku)
-                    buffer = lines[-1]  # Keep incomplete line in buffer
+            print(f"🔧 Raw data received: {chunk}")
+            buffer.extend(chunk)
+
+            # Extract complete lines terminated by \r, \n or \r\n
+            while True:
+                idx_r = buffer.find(b"\r")
+                idx_n = buffer.find(b"\n")
+                candidates = [i for i in (idx_r, idx_n) if i != -1]
+                if not candidates:
+                    break
+
+                idx = min(candidates)
+                line = bytes(buffer[:idx])
+
+                # Drop the delimiter we found
+                del buffer[:idx + 1]
+                # If it was \r\n, drop the second delimiter too
+                if buffer[:1] == b"\n":
+                    del buffer[:1]
+
+                sku = line.decode("utf-8", errors="ignore").strip()
+                if sku:
+                    print(f"🔍 Scanner read: '{sku}'")
+                    if session_active:
+                        await send_sku_to_api(sku)
 
         except Exception as e:
             print(f"❌ Scanner error: {e}")
             await asyncio.sleep(0.1)
-
-
-async def scanner_listener(scanner_reader):
-    """Continuously listens to barcode scanner and prints data."""
-    global session_active
-    logger = get_logger()
-    print(f"\n📸 Scanner active on {SCANNER_PORT} — waiting for barcodes...\n")
-
-    # Test message to verify function is running
-    print("🔧 Scanner listener started successfully")
-
-    while True:
-        try:
-            line = await scanner_reader.readline()
-            if not line:
-                print("⚠️ Scanner: Empty line received")
-                continue
-
-            # Print raw bytes for debugging
-            print(f"🔧 Scanner raw bytes: {line}")
-
-            sku = line.decode(errors="ignore").strip()
-            if not sku:
-                print("⚠️ Scanner: Empty SKU after decoding")
-                continue
-
-            print(f"🔍 Scanner read: '{sku}'")
-            if session_active:
-                await send_sku_to_api(sku)
-            else:
-                print("⚠️ No active session — cannot send SKU.")
-                logger.warning(f"Session inactive — '{sku}' ignored.")
-
-        except Exception as e:
-            print(f"❌ Scanner error: {e}")
-            logger.error(f"Scanner read error: {e}")
-            await asyncio.sleep(1)
 
 
 # ------------------ API ------------------
@@ -257,7 +236,6 @@ async def main():
     await asyncio.gather(
         websocket_listener(),
         serial_listener(arduino_reader),
-        # scanner_listener(scanner_reader)
         scanner_listener_alternative(scanner_reader)  # Use alternative version
 
     )
