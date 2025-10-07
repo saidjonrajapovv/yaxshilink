@@ -6,26 +6,22 @@ import websockets
 import logging
 from pathlib import Path
 
-# ------------------ CONFIG ------------------
-BASE_IP = "10.10.3.49:8000"  # change to your host:port if needed
+BASE_IP = "10.10.3.49:8000"
 DEVICE_NUMBER = "0f00b3d8-f6e2-4e0d-8a7b-61e0838c8f6f"
 
 API_CHECK_URL = f"http://{BASE_IP}/api/bottle/check/"
 SESSION_ITEM_URL = f"http://{BASE_IP}/api/session/{{session_id}}/items/"
 WS_URL = f"ws://{BASE_IP}/ws/device/{DEVICE_NUMBER}/"
 
-# Serial devices
 ARDUINO_PORT = "/dev/ttyUSB0"
 SCANNER_PORT = "/dev/ttyACM0"
 BAUDRATE = 9600
 
-# ------------------ GLOBAL STATE ------------------
 session_active = False
 session_id = None
 serial_writer = None
 loggers = {}
 
-# ------------------ LOGGING ------------------
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
 
@@ -52,7 +48,6 @@ def get_logger(session_id: int = None) -> logging.Logger:
     return logger
 
 
-# ------------------ SERIAL HANDLING ------------------
 async def init_serial_ports():
     """Connect to Arduino and Scanner."""
     global serial_writer
@@ -84,7 +79,6 @@ async def send_to_arduino(cmd: str):
         print("⚠️ Arduino not connected")
 
 
-# ------------------ API COMMUNICATION ------------------
 async def send_sku_to_api(sku: str):
     """Check SKU validity and forward to session."""
     global session_id
@@ -109,7 +103,6 @@ async def send_sku_to_api(sku: str):
                 print(msg)
                 logger.info(msg)
 
-                # Send correct signal to Arduino
                 if material == "P":
                     await send_to_arduino("P")
                 elif material == "A":
@@ -117,7 +110,6 @@ async def send_sku_to_api(sku: str):
                 else:
                     await send_to_arduino("R")
 
-                # Add to active session
                 if session_id:
                     post_url = SESSION_ITEM_URL.format(session_id=session_id)
                     async with session.post(post_url, json={"sku": sku}) as post_resp:
@@ -136,7 +128,6 @@ async def send_sku_to_api(sku: str):
             logger.exception(f"Unexpected error: {e}")
 
 
-# ------------------ WEBSOCKET HANDLING ------------------
 async def websocket_listener():
     """Listen to backend WebSocket for session events."""
     global session_active, session_id
@@ -183,7 +174,6 @@ async def websocket_listener():
         asyncio.create_task(websocket_listener())
 
 
-# ------------------ ARDUINO LISTENER ------------------
 async def arduino_listener(arduino_reader):
     """Listen to Arduino messages (like button press)."""
     global session_active
@@ -211,7 +201,7 @@ async def arduino_listener(arduino_reader):
 
 # ------------------ SCANNER LISTENER ------------------
 async def scanner_listener(scanner_reader):
-    """Listen directly to Netum scanner input."""
+    """Listen directly to Netum scanner input (always print scanned data)."""
     global session_active
     logger = get_logger()
 
@@ -222,16 +212,21 @@ async def scanner_listener(scanner_reader):
             line = await scanner_reader.readline()
             if not line:
                 continue
+
             sku = line.decode(errors="ignore").strip()
             if not sku:
                 continue
 
+            # Always show scanned data on terminal
             print(f"🧾 Scanned: {sku}")
+            logger.info(f"Scanned: {sku}")
+
+            # Send to API only if session active
             if session_active:
                 await send_sku_to_api(sku)
             else:
-                print("⚠️ No active session — scan ignored.")
-                logger.warning(f"Session inactive — '{sku}' ignored.")
+                print("⚠️ No active session — scan not sent to server.")
+                logger.warning(f"Scan ignored (inactive session): {sku}")
 
         except Exception as e:
             logger.error(f"Scanner read error: {e}")
