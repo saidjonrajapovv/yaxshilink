@@ -162,45 +162,56 @@ async def send_sku_to_api(sku: str):
     global session_id
     logger = get_logger(session_id)
 
-    async def _work():
-        async with aiohttp.ClientSession() as session:
-            try:
-                # Step 1: check
+    async with aiohttp.ClientSession() as session:
+        try:
+            # Step 1: check
+            async def _check():
                 async with session.post(cfg.api_check_url, json={"sku": sku}) as resp:
-                    data = await resp.json()
+                    return await resp.json()
 
-                if not data.get("exists"):
-                    ui.show_special("NOT_FOUND")
-                    logger.warning(f"{sku} not found")
-                    await send_to_arduino("R")
-                    return
+            data = await ui.run_with_progress(
+                title=f"POST /api/bottle/check/",
+                coro=_check(),
+                update_hint=f"SKU: {sku}",
+            )
 
-                bottle = data.get("bottle", {})
-                material = bottle.get("material")
-                name = bottle.get("name", "Unknown")
+            if not data.get("exists"):
+                ui.show_special("NOT_FOUND")
+                logger.warning(f"{sku} not found")
+                await send_to_arduino("R")
+                return
 
-                ui.show_special("FOUND")
-                logger.info(f"{sku} → {name} ({material})")
+            bottle = data.get("bottle", {})
+            material = bottle.get("material")
+            name = bottle.get("name", "Unknown")
 
-                await send_to_arduino(material if material in ("P", "A") else "R")
+            ui.show_special("FOUND")
+            logger.info(f"{sku} → {name} ({material})")
 
-                # Step 2: add to session if exists
-                if session_id:
-                    post_url = cfg.session_item_url(session_id)
+            await send_to_arduino(material if material in ("P", "A") else "R")
+
+            # Step 2: add to session if exists
+            if session_id:
+                post_url = cfg.session_item_url(session_id)
+
+                async def _add():
                     async with session.post(post_url, json={"sku": sku}) as post_resp:
-                        if post_resp.status in (200, 201):
-                            ui.show_special("ADDED")
-                            logger.info(f"{sku} added to session.")
-                        else:
-                            err = await post_resp.text()
-                            ui.show_special("ERROR")
-                            logger.error(f"Failed to send to session: {post_resp.status} → {err}")
-            except Exception as e:
-                ui.show_special("ERROR")
-                logger.exception(f"API error: {e}")
+                        return post_resp.status, await post_resp.text()
 
-    # Run work with progress UI that clears old lines and shows a linear bar
-    await ui.run_with_progress(title=f"PROCESSING {sku}", coro=_work())
+                status, body = await ui.run_with_progress(
+                    title=f"POST /api/session/{session_id}/items/",
+                    coro=_add(),
+                    update_hint=f"SKU: {sku}",
+                )
+                if status in (200, 201):
+                    ui.show_special("ADDED")
+                    logger.info(f"{sku} added to session.")
+                else:
+                    ui.show_special("ERROR")
+                    logger.error(f"Failed to send to session: {status} → {body}")
+        except Exception as e:
+            ui.show_special("ERROR")
+            logger.exception(f"API error: {e}")
 
 
 # ------------------ WEBSOCKET HANDLER ------------------
@@ -265,6 +276,12 @@ def run(config_path: Optional[str] = None):
     LOG_DIR = choose_log_dir(cfg.log_dir)
     global ui
     ui = TerminalUI(enabled=True)  # We still show minimal UI, regardless of quiet prints
+    # Show header: device and endpoints
+    ui.set_header([
+        f"DEVICE: {cfg.device_number}",
+        f"API: {cfg.http_base}",
+        f"WS: {cfg.ws_url}",
+    ])
     try:
         asyncio.run(main())
     except KeyboardInterrupt:

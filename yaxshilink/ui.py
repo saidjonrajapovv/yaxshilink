@@ -24,6 +24,7 @@ class TerminalUI:
     def __init__(self, enabled: bool = True):
         self.enabled = enabled
         self._last_lines = 0
+        self._header: list[str] = []
 
     def _write(self, s: str):
         if not self.enabled:
@@ -36,6 +37,10 @@ class TerminalUI:
             return
         self._write(clear_screen())
         self._last_lines = 0
+        # Repaint header if set
+        if self._header:
+            for ln in self._header:
+                self._write(ln + "\n")
 
     def show_lines(self, lines: list[str]):
         if not self.enabled:
@@ -44,6 +49,11 @@ class TerminalUI:
         for ln in lines:
             self._write(ln + "\n")
         self._last_lines = len(lines)
+
+    def set_header(self, lines: list[str]):
+        self._header = lines[:]
+        # Repaint immediately
+        self.reset()
 
     async def animate_until(self, title: str, done_evt: asyncio.Event, update_hint: Optional[str] = None):
         if not self.enabled:
@@ -83,6 +93,10 @@ class TerminalUI:
                 pass
             # Clear at the end to keep the terminal clean
             self.reset()
+            # Keep header visible when idle
+            if self._header:
+                # No body lines, just header
+                pass
         return result
 
     def show_special(self, text: str):
