@@ -7,7 +7,7 @@ import subprocess
 from pathlib import Path
 from typing import List, Optional
 
-from .config import Config, save_config
+from .config import Config, save_config, normalize_base_url
 
 
 def _list_serial_by_id() -> List[str]:
@@ -55,10 +55,15 @@ def setup(config_path: Optional[str] = None):
     defaults = Config()
 
     while True:
-        base_ip = _input_with_default("Server host:port (e.g. 10.10.3.49:8000)", defaults.base_ip)
-        if validate_host_port(base_ip):
+        base_in = _input_with_default(
+            "Server base URL (host:port or full URL, e.g. https://api.yaxshi.link)",
+            getattr(defaults, "base_url", "http://10.10.3.49:8000"),
+        )
+        # accept either full URL or host:port
+        if "://" in base_in or validate_host_port(base_in):
+            base_url = normalize_base_url(base_in)
             break
-        print("Invalid format. Use host:port")
+        print("Invalid input. Provide host:port or full URL like https://domain")
 
     device_number = _input_with_default("Device UUID/number", defaults.device_number)
 
@@ -87,7 +92,7 @@ def setup(config_path: Optional[str] = None):
 
     target = input(f"Config file path [{default_path}]: ").strip() or str(default_path)
     cfg = Config(
-        base_ip=base_ip,
+        base_url=base_url,
         device_number=device_number,
         arduino_port=arduino_port,
         scanner_port=scanner_port,

@@ -5,6 +5,7 @@ import os
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Optional
+from urllib.parse import urlparse
 
 
 DEFAULT_CONFIG_DIRS = [
@@ -16,7 +17,7 @@ DEFAULT_CONFIG_DIRS = [
 
 @dataclass
 class Config:
-    base_ip: str = "10.10.3.49:8000"
+    base_url: str = "http://10.10.3.49:8000"
     device_number: str = "CHANGE-ME-DEVICE-ID"
     arduino_port: str = "/dev/ttyUSB0"
     scanner_port: str = "/dev/ttyACM0"
@@ -25,15 +26,20 @@ class Config:
     quiet_terminal: bool = True  # minimize terminal noise, show only special lines
 
     @property
+    def http_base(self) -> str:
+        # Ensure scheme is http/https and no trailing slash
+        return normalize_http_base(self.base_url)
+
+    @property
     def api_check_url(self) -> str:
-        return f"http://{self.base_ip}/api/bottle/check/"
+        return join_url(self.http_base, "/api/bottle/check/")
 
     def session_item_url(self, session_id: int) -> str:
-        return f"http://{self.base_ip}/api/session/{session_id}/items/"
+        return join_url(self.http_base, f"/api/session/{session_id}/items/")
 
     @property
     def ws_url(self) -> str:
-        return f"ws://{self.base_ip}/ws/device/{self.device_number}/"
+        return build_ws_url(self.base_url, f"/ws/device/{self.device_number}/")
 
 
 def _load_json_if_exists(path: Path) -> Optional[dict]:
@@ -68,7 +74,8 @@ def load_config(explicit_path: Optional[Path] = None) -> Config:
 
     # Apply env overrides if present
     env_map = {
-        "base_ip": os.environ.get("YAX_BASE_IP"),
+        "base_url": os.environ.get("YAX_BASE_URL"),
+        "base_ip": os.environ.get("YAX_BASE_IP"),  # backward-compat
         "device_number": os.environ.get("YAX_DEVICE_NUMBER"),
         "arduino_port": os.environ.get("YAX_ARDUINO_PORT"),
         "scanner_port": os.environ.get("YAX_SCANNER_PORT"),
@@ -94,6 +101,17 @@ def load_config(explicit_path: Optional[Path] = None) -> Config:
         else:
             data[k] = v
 
+    # Normalize base URL
+    base_url = data.get("base_url")
+    base_ip = data.get("base_ip")
+    if base_url:
+        data["base_url"] = normalize_base_url(base_url)
+    elif base_ip:
+        data["base_url"] = normalize_base_url(base_ip)
+
+    # Drop legacy key if present
+    data.pop("base_ip", None)
+
     cfg = Config(**{**asdict(Config()), **data})
     return cfg
 
@@ -102,7 +120,7 @@ def save_config(cfg: Config, path: Path) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     # Only persist user-settable fields
     serializable = {
-        "base_ip": cfg.base_ip,
+        "base_url": cfg.base_url,
         "device_number": cfg.device_number,
         "arduino_port": cfg.arduino_port,
         "scanner_port": cfg.scanner_port,
@@ -110,3 +128,40 @@ def save_config(cfg: Config, path: Path) -> None:
         "log_dir": cfg.log_dir,
     }
     path.write_text(json.dumps(serializable, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def normalize_base_url(s: str) -> str:
+    """Accept host:port, http(s)://host[:port], or ws(s)://host[:port];
+    return canonical http(s)://host[:port] without trailing slash.
+    """
+    s = s.strip()
+    if not s:
+        return "http://localhost"
+    if "://" not in s:
+        # host[:port]
+        return f"http://{s}".rstrip("/")
+    p = urlparse(s)
+    if p.scheme in ("http", "https"):
+        return f"{p.scheme}://{p.netloc}".rstrip("/")
+    if p.scheme == "ws":
+        return f"http://{p.netloc}".rstrip("/")
+    if p.scheme == "wss":
+        return f"https://{p.netloc}".rstrip("/")
+    # default to http
+    return f"http://{p.netloc or s}".rstrip("/")
+
+
+def normalize_http_base(base_url: str) -> str:
+    base = normalize_base_url(base_url)
+    return base.rstrip("/")
+
+
+def join_url(base: str, path: str) -> str:
+    return f"{base.rstrip('/')}/{path.lstrip('/')}"
+
+
+def build_ws_url(base_url: str, path: str) -> str:
+    http = normalize_http_base(base_url)
+    parsed = urlparse(http)
+    ws_scheme = "wss" if parsed.scheme == "https" else "ws"
+    return f"{ws_scheme}://{parsed.netloc}{path}"
