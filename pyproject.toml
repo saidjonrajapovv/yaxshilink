@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "yaxshilink"
+version = "0.1.0"
+description = "Raspberry Pi service for scanner + Arduino with WebSocket/API integration"
+readme = "README.md"
+requires-python = ">=3.9"
+authors = [{ name = "yaxshilink", email = "devnull@example.com" }]
+dependencies = [
+  "aiohttp>=3.9",
+  "pyserial>=3.5",
+  "pyserial-asyncio>=0.6",
+  "websockets>=10",
+]
+
+[project.scripts]
+yaxshilink = "yaxshilink.app:run"
+yaxshilink-setup = "yaxshilink.cli:setup"
