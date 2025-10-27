@@ -22,6 +22,7 @@ class Config:
     scanner_port: str = "/dev/ttyACM0"
     baudrate: int = 9600
     log_dir: Optional[str] = None  # if None, app will choose a sensible default
+    quiet_terminal: bool = True  # minimize terminal noise, show only special lines
 
     @property
     def api_check_url(self) -> str:
@@ -73,6 +74,7 @@ def load_config(explicit_path: Optional[Path] = None) -> Config:
         "scanner_port": os.environ.get("YAX_SCANNER_PORT"),
         "baudrate": os.environ.get("YAX_BAUDRATE"),
         "log_dir": os.environ.get("YAX_LOG_DIR"),
+        "quiet_terminal": os.environ.get("YAX_QUIET_TERMINAL"),
     }
 
     for k, v in env_map.items():
@@ -83,6 +85,12 @@ def load_config(explicit_path: Optional[Path] = None) -> Config:
                 data[k] = int(v)
             except ValueError:
                 pass
+        elif k == "quiet_terminal":
+            lv = str(v).strip().lower()
+            if lv in ("1", "true", "yes", "on"):  # default True
+                data[k] = True
+            elif lv in ("0", "false", "no", "off"):
+                data[k] = False
         else:
             data[k] = v
 

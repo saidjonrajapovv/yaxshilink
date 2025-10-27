@@ -11,6 +11,7 @@ import serial_asyncio
 import websockets
 
 from .config import Config, load_config
+from .ui import TerminalUI
 
 
 # ------------------ GLOBAL STATE ------------------
@@ -19,6 +20,7 @@ session_id: Optional[int] = None
 serial_writer = None
 loggers: dict[str, logging.Logger] = {}
 cfg: Config
+ui: TerminalUI
 
 
 def choose_log_dir(custom: Optional[str]) -> Path:
@@ -69,10 +71,12 @@ async def init_serial_with_retry(url: str, baudrate: int, label: str, read_only:
     while True:
         try:
             reader, writer = await serial_asyncio.open_serial_connection(url=url, baudrate=baudrate)
-            print(f"Connected to {label} on {url}")
+            if not cfg.quiet_terminal:
+                print(f"Connected to {label} on {url}")
             return (reader, writer) if not read_only else (reader, None)
         except Exception as e:
-            print(f"{label} connect failed ({url}): {e}. Retrying in 2s…")
+            if not cfg.quiet_terminal:
+                print(f"{label} connect failed ({url}): {e}. Retrying in 2s…")
             await asyncio.sleep(2)
 
 
@@ -83,7 +87,8 @@ async def init_arduino():
 
 async def init_scanner():
     reader, _ = await init_serial_with_retry(cfg.scanner_port, cfg.baudrate, "Scanner", read_only=True)
-    print("Scanner active — waiting for barcodes…")
+    if not cfg.quiet_terminal:
+        print("Scanner active — waiting for barcodes…")
     return reader
 
 
@@ -95,7 +100,8 @@ async def send_to_arduino(cmd: str):
     try:
         serial_writer.write(f"{cmd}\n".encode())
         await serial_writer.drain()
-        print(f"-> Arduino: {cmd}")
+        if not cfg.quiet_terminal:
+            print(f"-> Arduino: {cmd}")
     except Exception as e:
         print(f"Arduino write error: {e}")
 
@@ -111,10 +117,12 @@ async def serial_listener(reader):
             if not msg:
                 continue
 
-            print(f"<- Arduino: {msg}")
+            if not cfg.quiet_terminal:
+                print(f"<- Arduino: {msg}")
             if msg == "E" and session_active:
                 session_active = False
-                print("Session ended by Arduino.")
+                if not cfg.quiet_terminal:
+                    print("Session ended by Arduino.")
                 logger.info("Arduino ended session.")
         except Exception as e:
             logger.error(f"Serial read error: {e}")
@@ -123,7 +131,8 @@ async def serial_listener(reader):
 
 # ------------------ SCANNER HANDLER ------------------
 async def scanner_listener(scanner_reader):
-    print(f"Listening for scanner data on {cfg.scanner_port}")
+    if not cfg.quiet_terminal:
+        print(f"Listening for scanner data on {cfg.scanner_port}")
     buffer = bytearray()
 
     while True:
@@ -140,7 +149,8 @@ async def scanner_listener(scanner_reader):
                 if buffer[:1] in (b"\n", b"\r"):
                     del buffer[:1]
                 if line and session_active:
-                    print(f"Scanner read: {line}")
+                    if not cfg.quiet_terminal:
+                        print(f"Scanner read: {line}")
                     await send_sku_to_api(line)
         except Exception as e:
             print(f"Scanner error: {e}")
@@ -152,39 +162,45 @@ async def send_sku_to_api(sku: str):
     global session_id
     logger = get_logger(session_id)
 
-    async with aiohttp.ClientSession() as session:
-        try:
-            async with session.post(cfg.api_check_url, json={"sku": sku}) as resp:
-                data = await resp.json()
+    async def _work():
+        async with aiohttp.ClientSession() as session:
+            try:
+                # Step 1: check
+                async with session.post(cfg.api_check_url, json={"sku": sku}) as resp:
+                    data = await resp.json()
 
-            if not data.get("exists"):
-                msg = f"{sku} → Not found"
-                print(msg)
-                logger.warning(msg)
-                await send_to_arduino("R")
-                return
+                if not data.get("exists"):
+                    ui.show_special("NOT_FOUND")
+                    logger.warning(f"{sku} not found")
+                    await send_to_arduino("R")
+                    return
 
-            bottle = data.get("bottle", {})
-            material = bottle.get("material")
-            name = bottle.get("name", "Unknown")
+                bottle = data.get("bottle", {})
+                material = bottle.get("material")
+                name = bottle.get("name", "Unknown")
 
-            msg = f"{sku} → {name} ({material})"
-            print(msg)
-            logger.info(msg)
+                ui.show_special("FOUND")
+                logger.info(f"{sku} → {name} ({material})")
 
-            await send_to_arduino(material if material in ("P", "A") else "R")
+                await send_to_arduino(material if material in ("P", "A") else "R")
 
-            if session_id:
-                post_url = cfg.session_item_url(session_id)
-                async with session.post(post_url, json={"sku": sku}) as post_resp:
-                    if post_resp.status in (200, 201):
-                        print(f"{sku} added to session.")
-                        logger.info(f"{sku} added to session.")
-                    else:
-                        err = await post_resp.text()
-                        logger.error(f"Failed to send to session: {post_resp.status} → {err}")
-        except Exception as e:
-            logger.exception(f"API error: {e}")
+                # Step 2: add to session if exists
+                if session_id:
+                    post_url = cfg.session_item_url(session_id)
+                    async with session.post(post_url, json={"sku": sku}) as post_resp:
+                        if post_resp.status in (200, 201):
+                            ui.show_special("ADDED")
+                            logger.info(f"{sku} added to session.")
+                        else:
+                            err = await post_resp.text()
+                            ui.show_special("ERROR")
+                            logger.error(f"Failed to send to session: {post_resp.status} → {err}")
+            except Exception as e:
+                ui.show_special("ERROR")
+                logger.exception(f"API error: {e}")
+
+    # Run work with progress UI that clears old lines and shows a linear bar
+    await ui.run_with_progress(title=f"PROCESSING {sku}", coro=_work())
 
 
 # ------------------ WEBSOCKET HANDLER ------------------
@@ -192,10 +208,12 @@ async def websocket_listener():
     global session_active, session_id
     sys_logger = get_logger()
 
-    print(f"WebSocket: {cfg.ws_url}")
+    if not cfg.quiet_terminal:
+        print(f"WebSocket: {cfg.ws_url}")
     try:
         async with websockets.connect(cfg.ws_url) as ws:
-            print("WebSocket connected. Waiting for messages…")
+            if not cfg.quiet_terminal:
+                print("WebSocket connected. Waiting for messages…")
             sys_logger.info("WebSocket connected.")
 
             async for msg in ws:
@@ -210,19 +228,20 @@ async def websocket_listener():
                     session_active = active
 
                     state = "started" if active else "blocked"
-                    print(f"Session #{session_id} {state}.")
+                    ui.show_special("SESSION_STARTED" if active else "SESSION_BLOCKED")
                     logger.info(f"Session #{session_id} {state}.")
                     await send_to_arduino("S" if active else "E")
 
                 elif event == "session_stopped" and payload.get("session_id") == session_id:
                     session_active = False
-                    print(f"Session #{session_id} stopped.")
+                    ui.show_special("SESSION_STOPPED")
                     sys_logger.info(f"Session #{session_id} stopped.")
                     await send_to_arduino("E")
 
     except Exception as e:
         sys_logger.error(f"WebSocket error: {e}")
-        print("WebSocket connection lost. Retrying in 3s…")
+        if not cfg.quiet_terminal:
+            print("WebSocket connection lost. Retrying in 3s…")
         await asyncio.sleep(3)
         asyncio.create_task(websocket_listener())
 
@@ -244,10 +263,13 @@ def run(config_path: Optional[str] = None):
     global cfg, LOG_DIR
     cfg = load_config(Path(config_path) if config_path else None)
     LOG_DIR = choose_log_dir(cfg.log_dir)
+    global ui
+    ui = TerminalUI(enabled=True)  # We still show minimal UI, regardless of quiet prints
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
-        print("Program stopped.")
+        if not cfg.quiet_terminal:
+            print("Program stopped.")
 
 
 if __name__ == "__main__":
