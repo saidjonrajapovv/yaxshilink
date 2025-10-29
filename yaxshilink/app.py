@@ -259,11 +259,18 @@ async def websocket_listener():
     if not cfg.quiet_terminal:
         print(f"WebSocket: {cfg.ws_url}")
     try:
-        async with websockets.connect(cfg.ws_url) as _ws:
+        # Some servers enforce Origin; send it based on HTTP base to avoid 403
+        async with websockets.connect(
+            cfg.ws_url,
+            origin=cfg.http_base,
+            extra_headers={
+                "User-Agent": f"YaxshiLink/{cfg.version}",
+            },
+        ) as _ws:
             ws = _ws
             if not cfg.quiet_terminal:
                 print("WebSocket connected. Waiting for messages…")
-            sys_logger.info("WebSocket connected.")
+            sys_logger.info(f"WebSocket connected → {cfg.ws_url} (Origin={cfg.http_base})")
 
             # Send HELLO
             await ws_send({
@@ -312,7 +319,8 @@ async def websocket_listener():
                         fut.set_result(data)
 
     except Exception as e:
-        sys_logger.error(f"WebSocket error: {e}")
+        # Common cause of 403: missing/invalid Origin or path mismatch
+        sys_logger.error(f"WebSocket error: {e} | url={cfg.ws_url} origin={cfg.http_base}")
         if not cfg.quiet_terminal:
             print("WebSocket connection lost. Retrying in 3s…")
         await asyncio.sleep(3)
