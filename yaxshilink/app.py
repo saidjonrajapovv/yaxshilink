@@ -366,8 +366,6 @@ async def main():
 def run(config_path: Optional[str] = None):
     global cfg, LOG_DIR
     cfg = load_config(Path(config_path) if config_path else None)
-
-    print(cfg.base_url)
     LOG_DIR = choose_log_dir(cfg.log_dir)
     global ui
     ui = TerminalUI(enabled=True)  # We still show minimal UI, regardless of quiet prints
@@ -377,6 +375,18 @@ def run(config_path: Optional[str] = None):
         f"FANDOMAT_ID: {cfg.fandomat_id}",
         f"WS: {cfg.ws_url}",
     ])
+    # Log startup summary for diagnostics
+    sys_logger = get_logger()
+    token = cfg.device_token or ""
+    token_tail = token[-4:]
+    masked = ("*" * (len(token) - len(token_tail))) + token_tail if token else "(empty)"
+    sys_logger.info(
+        f"Startup config → base_url={cfg.http_base} ws={cfg.ws_url} fandomat_id={cfg.fandomat_id} token={masked}"
+    )
+    if not cfg.device_token or cfg.device_token.startswith("CHANGE-ME"):
+        sys_logger.error("Device token is not set. Update /etc/yaxshilink/config.json or run yaxshilink-setup as root.")
+    if not cfg.fandomat_id:
+        sys_logger.error("Fandomat ID is 0. Update /etc/yaxshilink/config.json or run yaxshilink-setup as root.")
     try:
         asyncio.run(main())
     except KeyboardInterrupt:
