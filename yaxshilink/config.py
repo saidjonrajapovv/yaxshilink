@@ -137,6 +137,11 @@ def save_config(cfg: Config, path: Path) -> None:
     # Only persist user-settable fields
     serializable = {
         "base_url": cfg.base_url,
+        # New protocol fields
+        "fandomat_id": cfg.fandomat_id,
+        "device_token": cfg.device_token,
+        "version": cfg.version,
+        # Legacy/optional
         "device_number": cfg.device_number,
         "arduino_port": cfg.arduino_port,
         "scanner_port": cfg.scanner_port,
