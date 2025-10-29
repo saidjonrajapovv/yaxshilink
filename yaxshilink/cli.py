@@ -65,7 +65,17 @@ def setup(config_path: Optional[str] = None):
             break
         print("Invalid input. Provide host:port or full URL like https://domain")
 
-    device_number = _input_with_default("Device UUID/number", defaults.device_number)
+    # New protocol credentials
+    while True:
+        fid = _input_with_default("Fandomat ID (integer)", str(getattr(defaults, "fandomat_id", 0)))
+        try:
+            fandomat_id = int(fid)
+            break
+        except ValueError:
+            print("Enter a valid integer for Fandomat ID")
+
+    device_token = _input_with_default("Device token", getattr(defaults, "device_token", "CHANGE-ME-TOKEN"))
+    version = _input_with_default("Firmware version", getattr(defaults, "version", "1.0.0"))
 
     serials = _list_serial_by_id()
     if not serials:
@@ -93,7 +103,9 @@ def setup(config_path: Optional[str] = None):
     target = input(f"Config file path [{default_path}]: ").strip() or str(default_path)
     cfg = Config(
         base_url=base_url,
-        device_number=device_number,
+        fandomat_id=fandomat_id,
+        device_token=device_token,
+        version=version,
         arduino_port=arduino_port,
         scanner_port=scanner_port,
         baudrate=baudrate,

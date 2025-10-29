@@ -4,9 +4,8 @@ import asyncio
 import json
 import logging
 from pathlib import Path
-from typing import Optional
+from typing import Optional, Any
 
-import aiohttp
 import serial_asyncio
 import websockets
 
@@ -16,11 +15,15 @@ from .ui import TerminalUI
 
 # ------------------ GLOBAL STATE ------------------
 session_active: bool = False
-session_id: Optional[int] = None
+session_id: Optional[str] = None
 serial_writer = None
 loggers: dict[str, logging.Logger] = {}
 cfg: Config
 ui: TerminalUI
+ws = None
+ws_send_lock: asyncio.Lock
+pending_check_future: Optional[asyncio.Future] = None
+last_activity: float = 0.0
 
 
 def choose_log_dir(custom: Optional[str]) -> Path:
@@ -151,103 +154,162 @@ async def scanner_listener(scanner_reader):
                 if line and session_active:
                     if not cfg.quiet_terminal:
                         print(f"Scanner read: {line}")
-                    await send_sku_to_api(line)
+                    await process_barcode(line)
         except Exception as e:
             print(f"Scanner error: {e}")
             await asyncio.sleep(0.1)
 
 
-# ------------------ API HANDLERS ------------------
-async def send_sku_to_api(sku: str):
-    global session_id
+# ------------------ WS MESSAGE HELPERS ------------------
+async def ws_send(msg: dict[str, Any]):
+    global ws
+    async with ws_send_lock:
+        await ws.send(json.dumps(msg))
+
+
+def map_material_to_arduino(material: str) -> str:
+    m = (material or "").lower()
+    if m.startswith("plast"):
+        return "P"
+    if m.startswith("alum"):
+        return "A"
+    return "R"
+
+
+def now_utc_iso() -> str:
+    from datetime import datetime, timezone
+    return datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+
+
+def next_bottle_code() -> str:
+    counter_file = LOG_DIR / f"counter_{cfg.fandomat_id}.txt"
+    try:
+        n = int(counter_file.read_text().strip())
+    except Exception:
+        n = 0
+    n += 1
+    try:
+        counter_file.write_text(str(n))
+    except Exception:
+        pass
+    return f"BTL-{cfg.fandomat_id:03d}-{n:05d}"
+
+
+async def process_barcode(sku: str):
+    global pending_check_future, last_activity
     logger = get_logger(session_id)
 
-    async with aiohttp.ClientSession() as session:
+    async def _check_and_wait():
+        nonlocal sku
+        # Send CHECK_BOTTLE
+        await ws_send({
+            "type": "CHECK_BOTTLE",
+            "session_id": session_id,
+            "sku": sku,
+        })
+        # Wait for BOTTLE_CHECK_RESULT
+        fut = asyncio.get_event_loop().create_future()
+        pending_check_future = fut
         try:
-            # Step 1: check
-            async def _check():
-                async with session.post(cfg.api_check_url, json={"sku": sku}) as resp:
-                    return await resp.json()
+            res = await asyncio.wait_for(fut, timeout=10)
+            return res
+        finally:
+            pending_check_future = None
 
-            data = await ui.run_with_progress(
-                title=f"POST /api/bottle/check/",
-                coro=_check(),
-                update_hint=f"SKU: {sku}",
-            )
+    try:
+        data = await ui.run_with_progress(
+            title="WS CHECK_BOTTLE",
+            coro=_check_and_wait(),
+            update_hint=f"SKU: {sku}",
+        )
+    except asyncio.TimeoutError:
+        ui.show_special("ERROR")
+        logger.error("CHECK_BOTTLE timeout")
+        return
 
-            if not data.get("exists"):
-                ui.show_special("NOT_FOUND")
-                logger.warning(f"{sku} not found")
-                await send_to_arduino("R")
-                return
+    exist = data.get("exist") or data.get("exists")
+    if not exist:
+        ui.show_special("NOT_FOUND")
+        logger.warning(f"{sku} not found")
+        await send_to_arduino("R")
+        return
 
-            bottle = data.get("bottle", {})
-            material = bottle.get("material")
-            name = bottle.get("name", "Unknown")
+    bottle = data.get("bottle", {})
+    material = bottle.get("material", "")
+    await send_to_arduino(map_material_to_arduino(material))
+    ui.show_special("FOUND")
+    logger.info(f"{sku} accepted ({material})")
 
-            ui.show_special("FOUND")
-            logger.info(f"{sku} → {name} ({material})")
-
-            await send_to_arduino(material if material in ("P", "A") else "R")
-
-            # Step 2: add to session if exists
-            if session_id:
-                post_url = cfg.session_item_url(session_id)
-
-                async def _add():
-                    async with session.post(post_url, json={"sku": sku}) as post_resp:
-                        return post_resp.status, await post_resp.text()
-
-                status, body = await ui.run_with_progress(
-                    title=f"POST /api/session/{session_id}/items/",
-                    coro=_add(),
-                    update_hint=f"SKU: {sku}",
-                )
-                if status in (200, 201):
-                    ui.show_special("ADDED")
-                    logger.info(f"{sku} added to session.")
-                else:
-                    ui.show_special("ERROR")
-                    logger.error(f"Failed to send to session: {status} → {body}")
-        except Exception as e:
-            ui.show_special("ERROR")
-            logger.exception(f"API error: {e}")
+    # Send BOTTLE_ACCEPTED
+    code = next_bottle_code()
+    await ws_send({
+        "type": "BOTTLE_ACCEPTED",
+        "session_id": session_id,
+        "code": code,
+        "material": material,
+        "timestamp": now_utc_iso(),
+    })
+    last_activity = asyncio.get_event_loop().time()
 
 
 # ------------------ WEBSOCKET HANDLER ------------------
 async def websocket_listener():
-    global session_active, session_id
+    global session_active, session_id, ws, pending_check_future, last_activity
     sys_logger = get_logger()
-
     if not cfg.quiet_terminal:
         print(f"WebSocket: {cfg.ws_url}")
     try:
-        async with websockets.connect(cfg.ws_url) as ws:
+        async with websockets.connect(cfg.ws_url) as _ws:
+            ws = _ws
             if not cfg.quiet_terminal:
                 print("WebSocket connected. Waiting for messages…")
             sys_logger.info("WebSocket connected.")
 
+            # Send HELLO
+            await ws_send({
+                "type": "HELLO",
+                "fandomat_id": cfg.fandomat_id,
+                "device_token": cfg.device_token,
+                "version": cfg.version,
+            })
+
+            # Read loop
             async for msg in ws:
                 data = json.loads(msg)
-                event = data.get("event")
-                payload = data.get("data", {})
+                mtype = data.get("type")
 
-                if event == "session_created":
-                    session_id = payload.get("session_id")
-                    active = payload.get("status") == "active"
-                    logger = get_logger(session_id)
-                    session_active = active
+                if mtype == "OK":
+                    ui.show_special("HELLO_OK")
+                    sys_logger.info(data.get("message", "OK"))
 
-                    state = "started" if active else "blocked"
-                    ui.show_special("SESSION_STARTED" if active else "SESSION_BLOCKED")
-                    logger.info(f"Session #{session_id} {state}.")
-                    await send_to_arduino("S" if active else "E")
+                elif mtype == "ERROR":
+                    ui.show_special("HELLO_ERROR")
+                    sys_logger.error(data.get("error", "ERROR"))
 
-                elif event == "session_stopped" and payload.get("session_id") == session_id:
-                    session_active = False
-                    ui.show_special("SESSION_STOPPED")
-                    sys_logger.info(f"Session #{session_id} stopped.")
-                    await send_to_arduino("E")
+                elif mtype == "PING":
+                    await ws_send({"type": "PONG"})
+
+                elif mtype == "START_SESSION":
+                    session_id = data.get("session_id")
+                    session_active = True
+                    last_activity = asyncio.get_event_loop().time()
+                    ui.show_special("SESSION_STARTED")
+                    sys_logger.info(f"Session {session_id} started")
+                    await send_to_arduino("S")
+                    # acknowledge
+                    await ws_send({"type": "SESSION_STARTED", "session_id": session_id})
+
+                elif mtype == "CANCEL_SESSION":
+                    if data.get("session_id") == session_id:
+                        session_active = False
+                        ui.show_special("SESSION_STOPPED")
+                        sys_logger.info(f"Session {session_id} cancelled")
+                        await send_to_arduino("E")
+
+                elif mtype == "BOTTLE_CHECK_RESULT":
+                    fut = pending_check_future
+                    if fut and not fut.done():
+                        fut.set_result(data)
 
     except Exception as e:
         sys_logger.error(f"WebSocket error: {e}")
@@ -257,29 +319,54 @@ async def websocket_listener():
         asyncio.create_task(websocket_listener())
 
 
+async def inactivity_watcher(timeout_seconds: int = 90):
+    global session_active, last_activity, session_id
+    logger = get_logger()
+    loop = asyncio.get_event_loop()
+    while True:
+        try:
+            if session_active:
+                now = loop.time()
+                if now - last_activity >= timeout_seconds:
+                    # send SESSION_END
+                    sid = session_id
+                    await ws_send({"type": "SESSION_END", "session_id": sid})
+                    session_active = False
+                    ui.show_special("SESSION_STOPPED")
+                    logger.info(f"Session {sid} ended by inactivity")
+                    await send_to_arduino("E")
+            await asyncio.sleep(1)
+        except Exception:
+            await asyncio.sleep(1)
+
+
 # ------------------ MAIN ------------------
 async def main():
-    global serial_writer
+    global serial_writer, ws_send_lock
     arduino_reader, serial_writer = await init_arduino()
     scanner_reader = await init_scanner()
+    ws_send_lock = asyncio.Lock()
 
     await asyncio.gather(
         websocket_listener(),
         serial_listener(arduino_reader),
         scanner_listener(scanner_reader),
+        inactivity_watcher(),
     )
 
 
 def run(config_path: Optional[str] = None):
     global cfg, LOG_DIR
     cfg = load_config(Path(config_path) if config_path else None)
+
+    print(cfg.base_url)
     LOG_DIR = choose_log_dir(cfg.log_dir)
     global ui
     ui = TerminalUI(enabled=True)  # We still show minimal UI, regardless of quiet prints
     # Show header: device and endpoints
     ui.set_header([
-        f"DEVICE: {cfg.device_number}",
-        f"API: {cfg.http_base}",
+        f"DEVICE_TOKEN: {cfg.device_token}",
+        f"FANDOMAT_ID: {cfg.fandomat_id}",
         f"WS: {cfg.ws_url}",
     ])
     try:

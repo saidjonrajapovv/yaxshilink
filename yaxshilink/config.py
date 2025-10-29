@@ -18,6 +18,11 @@ DEFAULT_CONFIG_DIRS = [
 @dataclass
 class Config:
     base_url: str = "http://10.10.3.49:8000"
+    # New protocol fields
+    fandomat_id: int = 0
+    device_token: str = "CHANGE-ME-TOKEN"
+    version: str = "1.0.0"
+    # Legacy/optional
     device_number: str = "CHANGE-ME-DEVICE-ID"
     arduino_port: str = "/dev/ttyUSB0"
     scanner_port: str = "/dev/ttyACM0"
@@ -32,14 +37,17 @@ class Config:
 
     @property
     def api_check_url(self) -> str:
+        # kept for backward compatibility; new protocol uses WS
         return join_url(self.http_base, "/api/bottle/check/")
 
     def session_item_url(self, session_id: int) -> str:
+        # kept for backward compatibility; new protocol uses WS
         return join_url(self.http_base, f"/api/session/{session_id}/items/")
 
     @property
     def ws_url(self) -> str:
-        return build_ws_url(self.base_url, f"/ws/device/{self.device_number}/")
+        # New protocol fixed path
+        return build_ws_url(self.base_url, "/ws/fandomats")
 
 
 def _load_json_if_exists(path: Path) -> Optional[dict]:
@@ -76,6 +84,9 @@ def load_config(explicit_path: Optional[Path] = None) -> Config:
     env_map = {
         "base_url": os.environ.get("YAX_BASE_URL"),
         "base_ip": os.environ.get("YAX_BASE_IP"),  # backward-compat
+        "fandomat_id": os.environ.get("YAX_FANDOMAT_ID"),
+        "device_token": os.environ.get("YAX_DEVICE_TOKEN"),
+        "version": os.environ.get("YAX_VERSION"),
         "device_number": os.environ.get("YAX_DEVICE_NUMBER"),
         "arduino_port": os.environ.get("YAX_ARDUINO_PORT"),
         "scanner_port": os.environ.get("YAX_SCANNER_PORT"),
@@ -88,6 +99,11 @@ def load_config(explicit_path: Optional[Path] = None) -> Config:
         if v is None:
             continue
         if k == "baudrate":
+            try:
+                data[k] = int(v)
+            except ValueError:
+                pass
+        elif k == "fandomat_id":
             try:
                 data[k] = int(v)
             except ValueError:
