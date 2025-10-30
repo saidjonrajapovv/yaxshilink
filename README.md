@@ -1,88 +1,167 @@
-# YaxshiLink service
+# YaxshiLink Device Client
 
-Raspberry Pi service for integrating a barcode scanner and Arduino with your backend via WebSocket and HTTP API.
+Asinxron Python mijoz dasturi: Arduino va Scanner bilan serial orqali ishlaydi, API/WS orqali server bilan muloqot qiladi. macOS (launchd) va Raspberry Pi/Linux (systemd) uchun auto-start qo'llab-quvvatlanadi. Ushbu hujjat to'liq o'rnatish va foydalanish bo'yicha ko'rsatmalarni o'z ichiga oladi.
 
-## What it does
+## Talablar
 
-- Connects to two serial devices:
-  - Arduino (controls actuators via simple commands P/A/R/S/E)
-  - USB Scanner (reads barcodes)
-- Maintains a WebSocket connection to your server to manage sessions
-- Validates scanned SKUs via HTTP API and logs results
-- Runs as a systemd service and restarts automatically
+- Python 3.10+ (macOS yoki Raspberry Pi OS / Linux)
+- Internet ulanishi (API/WS uchun)
+- Qurilmalar: Arduino va Barcode Scanner (USB orqali)
 
-## Configure
+## Tez start (har ikkala OS uchun)
 
-Run the interactive setup to create a config file:
+1. Setup (venv, kutubxonalar, config, va ixtiyoriy auto-start):
 
-```
-yaxshilink-setup
+```sh
+python3 install.py setup
 ```
 
-It will ask for:
+2. Xizmat boshqaruvi (ixtiyoriy):
 
-- Server host:port, e.g. `10.10.3.49:8000`
-- Device number/UUID
-- Arduino serial port (pick from `/dev/serial/by-id/*` if available)
-- Scanner serial port
-- Baudrate (default 9600)
-
-By default, the config is saved to `/etc/yaxshilink/config.json` (root) or `~/.config/yaxshilink/config.json`.
-
-You can also override via environment variables:
-
-- `YAX_BASE_IP`
-- `YAX_DEVICE_NUMBER`
-- `YAX_ARDUINO_PORT`
-- `YAX_SCANNER_PORT`
-- `YAX_BAUDRATE`
-- `YAX_LOG_DIR`
-
-## Install on Raspberry Pi (as service)
-
-If you have this repo on the device, run the installer as root:
-
-```
-sudo bash scripts/install.sh
+```sh
+python3 install.py service-install   # Auto-start o'rnatish
+python3 install.py service-status    # Holatni ko'rish
+python3 install.py service-restart   # Qayta ishga tushirish
+python3 install.py service-remove    # O'chirish
 ```
 
-This will:
+3. Qo'lda ishga tushirish (foreground):
 
-- Create a venv in `/opt/yaxshilink/.venv`
-- Install this package into the venv
-- Run the setup wizard and save `/etc/yaxshilink/config.json`
-- Create and enable the `yaxshilink.service`
-
-Check service status:
-
-```
-systemctl status yaxshilink.service
-journalctl -u yaxshilink.service -f
+```sh
+python3 install.py run
 ```
 
-## Logs
+## CLI qo'llanma
 
-Logs are written to one of:
+Hammasi `install.py` orqali boshqariladi.
 
-- `/var/log/yaxshilink` (if writable)
-- `~/.local/state/yaxshilink/logs`
-- `./logs` (current directory)
+### Setup va portlar
 
-## Development
+- `setup` — virtual muhitni (agar bo'lsa) o'chirib, yangidan yaratadi; `requirements.txt` ni o'rnatadi; config sozlamalarini interaktiv so'raydi; OS'ga mos auto-start xizmatini o'rnatishni taklif qiladi.
+- `ports` — tizimdagi mavjud serial portlarni chiqaradi.
 
-Run locally from source:
+Misollar:
 
-```
-python -m yaxshilink.app
-```
-
-Or via entrypoint after `pip install -e .`:
-
-```
-yaxshilink
+```sh
+python3 install.py setup
+python3 install.py ports
 ```
 
-## Notes
+### Config boshqaruvi
 
-- For stable serial device names, prefer `/dev/serial/by-id/*` over `/dev/ttyUSB*`.
-- Ensure the user running the service has permission to access serial devices (typically belongs to the `dialout` group), or run as root (default in the provided unit).
+- `config-show` — joriy sozlamalarni ko'rsatadi (config.json).
+- `config-edit` — interaktiv tarzda qayta sozlaydi (WS URL, FANDOMAT_ID, DEVICE_TOKEN, BAUDRATE, Arduino/Scanner portlari).
+- `config-set` — parametrlar orqali o'rnatadi:
+
+```sh
+python3 install.py config-show
+python3 install.py config-edit
+python3 install.py config-set \
+	--ws-url wss://api.yaxshi.link/ws/fandomats \
+	--fandomat-id 3 \
+	--device-token fnd_xxx... \
+	--arduino-port /dev/ttyACM0 \
+	--scanner-port /dev/ttyUSB0 \
+	--baudrate 9600 \
+	--log-dir logs \
+	--version 1.0.0
+```
+
+`config.json` maydonlari:
+
+- `ws_url`: WebSocket endpoint (masalan: `wss://api.yaxshi.link/ws/fandomats`).
+- `fandomat_id`: Qurilma ID (raqam).
+- `device_token`: Qurilma tokeni (admin paneldan olinadi).
+- `version`: Dastur/firmware versiyasi (masalan: `1.0.0`).
+- `arduino_port`, `scanner_port`: Serial portlar.
+- `baudrate`: Odatda 9600.
+- `log_dir`: Loglar papkasi (`logs`).
+
+### Xizmat (auto-start) boshqaruvi
+
+OS avtomatik aniqlanadi: macOS — launchd, Linux/RPi — systemd.
+
+```sh
+python3 install.py service-install
+python3 install.py service-status
+python3 install.py service-start
+python3 install.py service-stop
+python3 install.py service-restart
+python3 install.py service-remove
+```
+
+Joylashuvlar:
+
+- macOS plist: `~/Library/LaunchAgents/com.yaxshilink.device.plist`
+- Linux unit: `/etc/systemd/system/yaxshilink.service`
+- Service loglar: `logs/service.out.log`, `logs/service.err.log`
+
+### Dasturni ishga tushirish
+
+- Foreground (interaktiv log bilan):
+
+```sh
+python3 install.py run
+```
+
+- Bevosita (venv ni qo'lda faollashtirib):
+
+```sh
+. ./.venv/bin/activate
+python main.py
+```
+
+### Test va diagnostika
+
+Oddiy sinovlar:
+
+```sh
+python3 install.py test-arduino    # Arduino portini ochish testi
+python3 install.py test-scanner    # Scanner portini ochish testi
+python3 install.py logs --lines 200
+python3 install.py test-ws         # WSga ulanish va HELLO testi
+```
+
+### Serial portlar bo'yicha eslatmalar
+
+- macOS: odatda `/dev/cu.*` yoki `/dev/tty.*` (ko'pincha `cu` ishlatiladi).
+- Linux/Raspberry Pi: odatda `/dev/ttyUSB*`, `/dev/ttyACM*`, ba'zan `/dev/serial0`.
+- RPi/Linux’da foydalanuvchi `dialout` guruhida bo‘lishi kerak (aks holda serialga ruxsat bo‘lmaydi). Agar kerak bo‘lsa:
+
+```sh
+sudo usermod -a -G dialout $USER
+newgrp dialout
+```
+
+### Muammolar va yechimlar (Troubleshooting)
+
+- Serialga ruxsat yo'q: foydalanuvchini `dialout` ga qo‘shing (Linux), yoki macOS’da port nomlarini tekshiring.
+- `python3-venv` topilmadi (Linux): `setup` bu paketni o'rnatishni taklif qiladi; `sudo apt-get install -y python3-venv` orqali ham o‘rnating.
+- Xizmat ishga tushmadi:
+  - Holatni tekshiring: `python3 install.py service-status`
+  - Loglar: `python3 install.py logs --lines 200`
+  - Linux’da qoʻshimcha: `journalctl -u yaxshilink.service -e` (ixtiyoriy)
+- Portlar ro‘yxatda ko‘rinmadi: qurilmalarni qayta ulab ko‘ring, drayverlar va kabellarni tekshiring.
+
+## Tuzilma
+
+- `app/config.py` — Konfiguratsiya va URL-lar
+- `app/logger.py` — Session/system loglar
+- `app/state.py` — Runtime holat
+- `app/arduino.py` — Arduino ulanishi va listener
+- `app/scanner.py` — Scanner ulanishi va listener
+- `app/ws_client.py` — WebSocket sessiya boshqaruvi
+- `app/app_main.py` — Orkestratsiya
+- `main.py` — Minimal entrypoint
+- `install.py` — Venv, config va auto-start (macOS launchd, Linux systemd)
+
+## Loglar
+
+- `logs/system.log` — tizimiy loglar
+- `logs/session_<id>.log` — har bir sessiya uchun loglar
+- Xizmat loglari: `logs/service.out.log`, `logs/service.err.log`
+
+## Yangilash va o'chirish
+
+- Yangilash: kodni yangilang, so‘ng `python3 install.py setup` (venv qayta yaratiladi) yoki faqat `requirements.txt` o‘zgargan bo‘lsa, `.venv` ichida `pip install -r requirements.txt`.
+- Xizmatni olib tashlash: `python3 install.py service-remove`.
