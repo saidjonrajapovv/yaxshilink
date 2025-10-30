@@ -18,6 +18,7 @@ async def scanner_listener(
     read_stream,
     is_session_active: Callable[[], bool],
     on_barcode: Callable[[str], Awaitable[None]],
+    log_info: Callable[[str], None],
 ):
     """Read barcodes from scanner, process and send to API."""
     buffer = bytearray()
@@ -38,6 +39,11 @@ async def scanner_listener(
                     del buffer[:1]
                 if line:
                     print(f"🔍 Scanner read: {line}")
+                    # Persist to system log as well
+                    try:
+                        log_info(f"Scanner read: {line}")
+                    except Exception:
+                        pass
                     if is_session_active():
                         await on_barcode(line)
         except Exception as e:

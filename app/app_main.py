@@ -27,6 +27,9 @@ async def run():
     arduino_reader, arduino_writer = await init_arduino(cfg.arduino_port, cfg.baudrate)
     state.serial_writer = arduino_writer
     scanner_reader = await init_scanner(cfg.scanner_port, cfg.baudrate)
+    # Log hardware connections to system log
+    get_logger(None).info(f"Arduino connected on {cfg.arduino_port}")
+    get_logger(None).info(f"Scanner connected on {cfg.scanner_port}")
 
     # Compose helpers bound with state
     async def send(cmd: str):
@@ -49,11 +52,17 @@ async def run():
         )
 
     async def scanner_task():
+        logger = get_logger(None)
         async def on_barcode(sku: str):
             # Send CHECK_BOTTLE over WS when session active
             if state.session_active and state.session_id and ws_send:
                 await ws_send({"type": "CHECK_BOTTLE", "session_id": state.session_id, "sku": sku})
-        await scanner_listener(scanner_reader, lambda: state.session_active, on_barcode)
+        await scanner_listener(
+            scanner_reader,
+            lambda: state.session_active,
+            on_barcode,
+            lambda m: logger.info(m),
+        )
 
     await asyncio.gather(
         websocket_listener(state, cfg, get_logger, send, set_ws_sender),
