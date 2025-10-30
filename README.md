@@ -120,6 +120,7 @@ python3 install.py test-arduino    # Arduino portini ochish testi
 python3 install.py test-scanner    # Scanner portini ochish testi
 python3 install.py logs --lines 200
 python3 install.py test-ws         # WSga ulanish va HELLO testi
+python3 install.py monitor         # Interaktiv monitoring (scanner/WS/session)
 ```
 
 ### Serial portlar bo'yicha eslatmalar

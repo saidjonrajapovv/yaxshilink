@@ -428,6 +428,15 @@ def logs_show(lines: int = 200):
     tail(err)
 
 
+def monitor_ui():
+    """Interactive dashboard to show scanner/WS/session events in real-time."""
+    from app.config import load_config
+    from app.monitor import run_monitor
+
+    cfg = load_config()
+    run_monitor(cfg.log_dir)
+
+
 def main():
     parser = argparse.ArgumentParser(description="YaxshiLink o'rnatish va xizmat boshqaruvi")
     sub = parser.add_subparsers(dest="cmd")
@@ -470,6 +479,9 @@ def main():
     # Logs
     logs_cmd = sub.add_parser("logs", help="Xizmat loglarini ko'rsatish")
     logs_cmd.add_argument("--lines", type=int, default=200)
+
+    # Monitor
+    sub.add_parser("monitor", help="Interaktiv monitoring (scanner/WS/session)")
 
     args = parser.parse_args()
 
@@ -529,6 +541,8 @@ def main():
         test_serial("scanner")
     elif args.cmd == "logs":
         logs_show(getattr(args, "lines", 200))
+    elif args.cmd == "monitor":
+        monitor_ui()
     else:
         parser.print_help()
 
