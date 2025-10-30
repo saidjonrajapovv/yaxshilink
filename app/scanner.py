@@ -45,7 +45,45 @@ async def scanner_listener(
     while True:
         try:
             chunk = await read_stream.read(128)
-            if not chunk:
+            if chunk:
+                # Log every chunk (raw bytes) to system log
+                try:
+                    hexp = " ".join(f"{b:02X}" for b in chunk)
+                    asc = chunk.decode(errors="ignore").replace("\r", "\\r").replace("\n", "\\n")
+                    log_info(f"Scanner raw: HEX: {hexp} | ASCII: {asc}")
+                except Exception:
+                    pass
+                last_rx = time.monotonic()
+                buffer.extend(chunk)
+                if len(buffer) > max_line_len:
+                    # Avoid unbounded growth if terminator missing
+                    line = buffer.decode(errors="ignore").strip()
+                    buffer.clear()
+                    if line:
+                        print(f"🔍 Scanner (maxlen flush): {line}")
+                        try:
+                            log_info(f"Scanner read: {line}")
+                        except Exception:
+                            pass
+                        if is_session_active():
+                            await on_barcode(line)
+                    continue
+                # Split on newline or carriage return
+                while (idx := next((i for i, b in enumerate(buffer) if b in (10, 13)), -1)) != -1:
+                    line = buffer[:idx].decode(errors="ignore").strip()
+                    del buffer[: idx + 1]
+                    if buffer[:1] in (b"\n", b"\r"):
+                        del buffer[:1]
+                    if line:
+                        print(f"🔍 Scanner read: {line}")
+                        # Persist to system log as well
+                        try:
+                            log_info(f"Scanner read: {line}")
+                        except Exception:
+                            pass
+                        if is_session_active():
+                            await on_barcode(line)
+            else:
                 # If idle and buffer has data but no terminator, flush as line
                 if buffer and (time.monotonic() - last_rx) * 1000 >= flush_timeout_ms:
                     line = buffer.decode(errors="ignore").strip()
@@ -60,43 +98,6 @@ async def scanner_listener(
                             await on_barcode(line)
                 await asyncio.sleep(0.01)
                 continue
-
-            last_rx = time.monotonic()
-            if raw_debug:
-                try:
-                    dbg = " ".join(f"{b:02X}" for b in chunk[:32])
-                    log_info(f"Scanner raw: {dbg}{' ...' if len(chunk) > 32 else ''}")
-                except Exception:
-                    pass
-            buffer.extend(chunk)
-            if len(buffer) > max_line_len:
-                # Avoid unbounded growth if terminator missing
-                line = buffer.decode(errors="ignore").strip()
-                buffer.clear()
-                if line:
-                    print(f"🔍 Scanner (maxlen flush): {line}")
-                    try:
-                        log_info(f"Scanner read: {line}")
-                    except Exception:
-                        pass
-                    if is_session_active():
-                        await on_barcode(line)
-                continue
-            # Split on newline or carriage return
-            while (idx := next((i for i, b in enumerate(buffer) if b in (10, 13)), -1)) != -1:
-                line = buffer[:idx].decode(errors="ignore").strip()
-                del buffer[: idx + 1]
-                if buffer[:1] in (b"\n", b"\r"):
-                    del buffer[:1]
-                if line:
-                    print(f"🔍 Scanner read: {line}")
-                    # Persist to system log as well
-                    try:
-                        log_info(f"Scanner read: {line}")
-                    except Exception:
-                        pass
-                    if is_session_active():
-                        await on_barcode(line)
         except Exception as e:
             print(f"❌ Scanner error: {e}")
             await asyncio.sleep(0.1)
