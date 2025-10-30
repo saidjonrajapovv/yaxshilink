@@ -118,6 +118,7 @@ Oddiy sinovlar:
 ```sh
 python3 install.py test-arduino    # Arduino portini ochish testi
 python3 install.py test-scanner    # Scanner portini ochish testi
+python3 install.py listen-scanner  # Scanner portidan xom oqimni ko'rish
 python3 install.py logs --lines 200
 python3 install.py test-ws         # WSga ulanish va HELLO testi
 python3 install.py monitor         # Interaktiv monitoring (scanner/WS/session)
@@ -137,6 +138,11 @@ newgrp dialout
 ### Muammolar va yechimlar (Troubleshooting)
 
 - Serialga ruxsat yo'q: foydalanuvchini `dialout` ga qo‘shing (Linux), yoki macOS’da port nomlarini tekshiring.
+- Scanner o‘qimayapti:
+  - Scanner HID (Keyboard) rejimda emas, balki USB-COM/Serial (CDC-ACM) rejimda ekanini tekshiring.
+  - `config.json` dagi `scanner_port` to‘g‘ri tanlanganiga ishonch hosil qiling (ko‘pincha Arduino = `/dev/ttyACM0`, Scanner = `/dev/ttyUSB0`).
+  - Scanner’da suffix sifatida CR yoki LF yoqilgan bo‘lishi kerak. Biz CR/LF ikkalasini ham qabul qilamiz; bo‘lmasa timeout bo‘yicha flush ishlaydi.
+  - Debug uchun xom baytlarni logga yozish: muhit o‘zgaruvchisi `YL_DEBUG_SCANNER=1` bilan ishga tushiring.
 - `python3-venv` topilmadi (Linux): `setup` bu paketni o'rnatishni taklif qiladi; `sudo apt-get install -y python3-venv` orqali ham o‘rnating.
 - Xizmat ishga tushmadi:
   - Holatni tekshiring: `python3 install.py service-status`

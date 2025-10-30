@@ -62,6 +62,9 @@ async def run():
             lambda: state.session_active,
             on_barcode,
             lambda m: logger.info(m),
+            flush_timeout_ms=200,
+            max_line_len=256,
+            raw_debug=None,
         )
 
     await asyncio.gather(

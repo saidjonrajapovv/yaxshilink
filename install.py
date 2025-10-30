@@ -410,6 +410,42 @@ def test_serial(kind: str, timeout: float = 2.0):
         print("❌ Serial xato:", e)
 
 
+def listen_scanner(seconds: int = 20):
+    """Read and print raw data from the configured scanner port for quick diagnostics."""
+    from app.config import load_config
+    import serial  # type: ignore
+    import time as _t
+
+    cfg = load_config()
+    port = cfg.scanner_port
+    print(f"Scannerni tinglayapman: {port} ({cfg.baudrate}), {seconds}s...")
+    try:
+        with serial.Serial(port, cfg.baudrate, timeout=0.1) as s:
+            start = _t.time()
+            buf = bytearray()
+            while _t.time() - start < seconds:
+                chunk = s.read(128)
+                if chunk:
+                    buf.extend(chunk)
+                    # Print hex preview and ASCII
+                    hexp = " ".join(f"{b:02X}" for b in chunk[:32])
+                    asc = chunk.decode(errors="ignore").replace("\r", "\\r").replace("\n", "\\n")
+                    print(f"[+{_t.time()-start:4.1f}s] HEX: {hexp}{' ...' if len(chunk)>32 else ''}  |  ASCII: {asc}")
+                else:
+                    _t.sleep(0.02)
+            # Try to extract final line if any
+            if buf:
+                try:
+                    text = buf.decode(errors="ignore").strip()
+                    if text:
+                        print("\nFinal buffer as text:", text)
+                except Exception:
+                    pass
+        print("✅ Tinglash tugadi.")
+    except Exception as e:
+        print("❌ Tinglash xatosi:", e)
+
+
 def logs_show(lines: int = 200):
     out = PROJECT_ROOT / "logs" / "service.out.log"
     err = PROJECT_ROOT / "logs" / "service.err.log"
@@ -475,6 +511,8 @@ def main():
     sub.add_parser("test-ws", help="WSga ulanish va HELLO testi")
     sub.add_parser("test-arduino", help="Arduino portini ochish test")
     sub.add_parser("test-scanner", help="Scanner portini ochish test")
+    listen_cmd = sub.add_parser("listen-scanner", help="Scanner portidan xom oqimni ko'rsatish")
+    listen_cmd.add_argument("--seconds", type=int, default=20)
 
     # Logs
     logs_cmd = sub.add_parser("logs", help="Xizmat loglarini ko'rsatish")
@@ -539,6 +577,8 @@ def main():
         test_serial("arduino")
     elif args.cmd == "test-scanner":
         test_serial("scanner")
+    elif args.cmd == "listen-scanner":
+        listen_scanner(getattr(args, "seconds", 20))
     elif args.cmd == "logs":
         logs_show(getattr(args, "lines", 200))
     elif args.cmd == "monitor":
