@@ -7,13 +7,11 @@ from datetime import datetime
 from pathlib import Path
 from typing import Optional
 import uuid
-import os
 
 # ------------------ CONFIG ------------------
-# Defaults (kept for backward compatibility)
 WS_URL = "wss://api.yaxshi.link/ws/fandomats"
-FANDOMAT_ID = 4
-DEVICE_TOKEN = "LJE-rsXEIQuhFifL_F7DbEZ5VCofU_0cR9bb1fQ1S88"
+FANDOMAT_ID = 3
+DEVICE_TOKEN = "fnd_a7b3c9d2e8f4g1h5i6j7k8l9m0n1"
 VERSION = "1.0.0"
 
 ARDUINO_PORT = "/dev/ttyUSB0"
@@ -21,36 +19,6 @@ SCANNER_PORT = "/dev/ttyACM0"
 BAUDRATE = 9600
 
 SESSION_TIMEOUT = 90
-
-# Load overrides from config.json (if present) and environment variables.
-# Priority: environment variables > config.json > defaults above.
-CONFIG_PATH = Path("config.json")
-if CONFIG_PATH.exists():
-    try:
-        cfg = json.loads(CONFIG_PATH.read_text(encoding="utf-8"))
-        WS_URL = cfg.get("WS_URL", WS_URL)
-        FANDOMAT_ID = cfg.get("FANDOMAT_ID", FANDOMAT_ID)
-        DEVICE_TOKEN = cfg.get("DEVICE_TOKEN", DEVICE_TOKEN)
-        VERSION = cfg.get("VERSION", VERSION)
-
-        ARDUINO_PORT = cfg.get("ARDUINO_PORT", ARDUINO_PORT)
-        SCANNER_PORT = cfg.get("SCANNER_PORT", SCANNER_PORT)
-        BAUDRATE = cfg.get("BAUDRATE", BAUDRATE)
-        SESSION_TIMEOUT = cfg.get("SESSION_TIMEOUT", SESSION_TIMEOUT)
-    except Exception as e:
-        # If config parsing fails, keep defaults and log later
-        print(f"Warning: failed to read config.json: {e}")
-
-# Environment variables override everything (useful for systemd or Docker)
-WS_URL = os.getenv("WS_URL", WS_URL)
-FANDOMAT_ID = int(os.getenv("FANDOMAT_ID", str(FANDOMAT_ID)))
-DEVICE_TOKEN = os.getenv("DEVICE_TOKEN", DEVICE_TOKEN)
-VERSION = os.getenv("VERSION", VERSION)
-
-ARDUINO_PORT = os.getenv("ARDUINO_PORT", ARDUINO_PORT)
-SCANNER_PORT = os.getenv("SCANNER_PORT", SCANNER_PORT)
-BAUDRATE = int(os.getenv("BAUDRATE", str(BAUDRATE)))
-SESSION_TIMEOUT = int(os.getenv("SESSION_TIMEOUT", str(SESSION_TIMEOUT)))
 
 LOG_DIR = Path("logs")
 LOG_DIR.mkdir(exist_ok=True)
