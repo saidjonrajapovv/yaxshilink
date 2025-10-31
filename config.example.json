@@ -1,0 +1,10 @@
+{
+  "WS_URL": "wss://api.yaxshi.link/ws/fandomats",
+  "FANDOMAT_ID": 3,
+  "DEVICE_TOKEN": "fnd_a7b3c9d2e8f4g1h5i6j7k8l9m0n1",
+  "VERSION": "1.0.0",
+  "ARDUINO_PORT": "/dev/ttyUSB0",
+  "SCANNER_PORT": "/dev/ttyACM0",
+  "BAUDRATE": 9600,
+  "SESSION_TIMEOUT": 90
+}
