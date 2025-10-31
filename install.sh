@@ -27,12 +27,10 @@ OS_NAME=$(uname -s)
 check_command python3
 
 # Ensure venv module available
-python3 - <<'PY' || {
+if ! python3 -c "import venv" >/dev/null 2>&1; then
   echo "python3 venv module missing. On Debian: sudo apt install python3-venv" >&2
   exit 1
-}
-import venv
-PY
+fi
 
 if [ ! -d "${VENV_DIR}" ]; then
   info "Creating virtual environment at ${VENV_DIR}"
