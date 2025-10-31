@@ -12,8 +12,8 @@ import os
 # ------------------ CONFIG ------------------
 # Defaults (kept for backward compatibility)
 WS_URL = "wss://api.yaxshi.link/ws/fandomats"
-FANDOMAT_ID = 3
-DEVICE_TOKEN = "fnd_a7b3c9d2e8f4g1h5i6j7k8l9m0n1"
+FANDOMAT_ID = 4
+DEVICE_TOKEN = "LJE-rsXEIQuhFifL_F7DbEZ5VCofU_0cR9bb1fQ1S88"
 VERSION = "1.0.0"
 
 ARDUINO_PORT = "/dev/ttyUSB0"
