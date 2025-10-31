@@ -180,24 +180,45 @@ class Fandomat:
     # ------------------ Scanner ------------------
     async def scanner_listener(self, scanner_reader):
         self.logger.info(f"Listening for scanner data on {SCANNER_PORT}")
+        # Prefer readline() for line-oriented scanners; fallback to buffered read if needed.
         buffer = bytearray()
+        use_readline = hasattr(scanner_reader, "readline")
+
         while not self._shutdown_event.is_set():
             try:
-                chunk = await scanner_reader.read(128)
-                if not chunk:
-                    await asyncio.sleep(0.01)
-                    continue
-                buffer.extend(chunk)
-                while (idx := next((i for i, b in enumerate(buffer) if b in (10, 13)), -1)) != -1:
-                    line = buffer[:idx].decode(errors="ignore").strip()
-                    del buffer[: idx + 1]
-                    if buffer[:1] in (b"\n", b"\r"):
-                        del buffer[:1]
+                if use_readline:
+                    raw = await scanner_reader.readline()
+                    if not raw:
+                        await asyncio.sleep(0.01)
+                        continue
+                    try:
+                        line = raw.decode(errors="ignore").strip()
+                    except Exception:
+                        line = raw.decode("utf-8", "replace").strip()
+
+                    self.logger.debug(f"Raw scanner bytes: {raw!r}")
                     if line:
                         self.logger.info(f"Scanner read: {line}")
                         if self.session_active and self.current_session_id:
                             await self.check_bottle(line)
                             await self.start_session_timeout()
+                else:
+                    # fallback: read chunks and split on CR/LF
+                    chunk = await scanner_reader.read(128)
+                    if not chunk:
+                        await asyncio.sleep(0.01)
+                        continue
+                    buffer.extend(chunk)
+                    while (idx := next((i for i, b in enumerate(buffer) if b in (10, 13)), -1)) != -1:
+                        line = buffer[:idx].decode(errors="ignore").strip()
+                        del buffer[: idx + 1]
+                        if buffer[:1] in (b"\n", b"\r"):
+                            del buffer[:1]
+                        if line:
+                            self.logger.info(f"Scanner read: {line}")
+                            if self.session_active and self.current_session_id:
+                                await self.check_bottle(line)
+                                await self.start_session_timeout()
             except Exception as e:
                 self.logger.error(f"Scanner error: {e}")
                 await asyncio.sleep(0.1)
