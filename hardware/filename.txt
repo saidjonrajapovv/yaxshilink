@@ -1,3 +1,12 @@
-Connection
+There used Arduino Nano (ATMEGA328P)
 
-will be updated
+ServoMotor SG90 connected to D6
+
+Adressed LED wb2812b connected to D5
+
+Stepper Motor Driver DM556( LOW - ACTIVE )
+STEP/PUL - D11
+DIR - 12
+ENA - 10
+
+MCU connected to rpi via USB using UART (USB can be removed by GPIO)
